@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "paths": {
+      "#shared": ["./src/shared/index.ts"],
+      "#shared/*": ["./src/shared/*"],
+      "#entities/*": ["./src/entities/*"],
+      "#features/*": ["./src/features/*"],
+      "#widgets/*": ["./src/widgets/*"],
+      "#pages": ["./src/pages/index.ts"],
+      "#pages/*": ["./src/pages/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "electron/**/*.ts", "vite.config.ts", "vitest.config.ts", "env.d.ts"]
+}

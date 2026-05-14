@@ -1,0 +1,40 @@
+# Dependências e caches
+node_modules
+.pnpm-store
+.npm
+.cache
+.turbo
+
+# Ambiente e segredos (mantém exemplos versionados)
+.env
+.env.*
+!.env.example
+!.env.*.example
+.env copy.example
+
+# Build e artefactos
+dist
+dist-electron
+out
+release
+.nuxt
+.output
+*.local
+
+# Dados / documentos locais (não versionar)
+documents/
+
+# Testes e cobertura
+coverage
+test-results
+cypress/screenshots
+cypress/videos
+*.tsbuildinfo
+
+# Logs e OS
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE (opcional — remove a linha se quiseres versionar .vscode)
+.idea

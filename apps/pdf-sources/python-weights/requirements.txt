@@ -1,0 +1,5 @@
+# Inspeção de pesos (GGUF / Safetensors) sem PyTorch.
+# Instalação: python -m pip install -r requirements.txt  (num venv com pip)
+gguf>=0.10.0
+safetensors>=0.4.0
+numpy>=1.24.0

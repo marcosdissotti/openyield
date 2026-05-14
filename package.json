@@ -1,0 +1,11 @@
+{
+  "name": "rihubai",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:pdf-sources": "npm run dev -w pdf-sources",
+    "dev:pdf-sources:web": "npm run dev:web -w pdf-sources",
+    "test:pdf-sources": "npm run test -w pdf-sources",
+    "e2e:pdf-sources": "npm run e2e -w pdf-sources"
+  }
+}
