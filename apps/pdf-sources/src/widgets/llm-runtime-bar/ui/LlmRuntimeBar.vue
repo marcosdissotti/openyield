@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useLlmRuntimeStore } from '#entities/llm-runtime'
 import { useAppShellStore } from '#entities/app-shell'
 import LlmStudioModelsDialog from './LlmStudioModelsDialog.vue'
@@ -23,25 +23,32 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 function eject() {
   llm.clearModelSelection()
 }
+
+const statusLabel = computed(() => (llm.connectionStatus === 'ok' ? 'Conectado' : 'Configurar LLM'))
 </script>
 
 <template>
-  <div
-    class="flex items-center gap-2 border-b border-slate-800 bg-slate-950/90 px-3 py-2 text-slate-200 backdrop-blur"
-  >
+  <div class="flex min-w-0 items-center gap-2 text-slate-700">
     <button
       type="button"
-      class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-left text-sm hover:border-slate-500"
+      class="flex h-10 min-w-0 max-w-[19rem] items-center gap-2 rounded-full border border-slate-300 bg-white px-3 text-left text-sm shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50/60"
       title="Modelo LM Studio (Ctrl+L)"
       @click="pickerOpen = true"
     >
-      <span class="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">LM</span>
-      <span class="min-w-0 flex-1 truncate font-medium text-slate-100">{{ llm.displayModelLabel }}</span>
-      <span class="shrink-0 text-slate-500">▾</span>
+      <span
+        class="h-2.5 w-2.5 shrink-0 rounded-full"
+        :class="
+          llm.connectionStatus === 'ok'
+            ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.16)]'
+            : 'bg-slate-300'
+        "
+      />
+      <span class="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{{ statusLabel }}</span>
+      <span class="min-w-0 truncate font-medium text-slate-900">{{ llm.displayModelLabel }}</span>
     </button>
     <button
       type="button"
-      class="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
+      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
       title="Ajustes do runtime"
       aria-label="Ajustes"
       @click="shell.openSettings()"
@@ -50,7 +57,7 @@ function eject() {
     </button>
     <button
       type="button"
-      class="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
+      class="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 sm:flex"
       title="Limpar modelo seleccionado na app"
       aria-label="Eject"
       @click="eject"

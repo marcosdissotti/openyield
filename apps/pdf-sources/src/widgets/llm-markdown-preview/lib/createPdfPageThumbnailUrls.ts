@@ -1,6 +1,6 @@
 import { getDocument } from 'pdfjs-dist'
 import { ensurePdfWorker } from '#shared/config/pdfjs'
-import { renderPdfPageToPng } from '#features/extract-pdf-rich/lib/renderPdfPageToPng'
+import { renderPdfPageRegionToPng, renderPdfPageToPng } from '#features/extract-pdf-rich/lib/renderPdfPageToPng'
 
 /**
  * Gera URLs de object (PNG) por página para pré-visualização na UI.
@@ -38,6 +38,28 @@ export async function createPdfPagePngObjectUrl(
   try {
     const page = await pdf.getPage(pageNum)
     const blob = await renderPdfPageToPng(page, scale)
+    return URL.createObjectURL(blob)
+  } finally {
+    await pdf.destroy()
+  }
+}
+
+/**
+ * Renderiza um recorte normalizado de uma página. Usado como evidência visual inline
+ * para comparar gráfico/tabela original com a reconstrução feita pela IA/OCR.
+ */
+export async function createPdfPageRegionPngObjectUrl(
+  file: File,
+  pageNum: number,
+  norm: { x: number; y: number; w: number; h: number },
+  scale = 1.35,
+): Promise<string> {
+  ensurePdfWorker()
+  const data = await file.arrayBuffer()
+  const pdf = await getDocument({ data }).promise
+  try {
+    const page = await pdf.getPage(pageNum)
+    const blob = await renderPdfPageRegionToPng(page, scale, norm)
     return URL.createObjectURL(blob)
   } finally {
     await pdf.destroy()

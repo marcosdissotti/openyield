@@ -81,25 +81,25 @@ function renderChart() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
-          labels: { color: '#cbd5e1', font: { size: 11 } },
+          labels: { color: '#475569', font: { size: 11 } },
         },
         title: {
           display: false,
         },
         tooltip: {
-          titleColor: '#f1f5f9',
+          titleColor: '#f8fafc',
           bodyColor: '#e2e8f0',
           backgroundColor: 'rgba(15, 23, 42, 0.95)',
         },
       },
       scales: {
         x: {
-          ticks: { color: '#94a3b8', maxRotation: 45, minRotation: 0 },
-          grid: { color: 'rgba(51, 65, 85, 0.35)' },
+          ticks: { color: '#64748b', maxRotation: 45, minRotation: 0 },
+          grid: { color: 'rgba(148, 163, 184, 0.28)' },
         },
         y: {
-          ticks: { color: '#94a3b8' },
-          grid: { color: 'rgba(51, 65, 85, 0.35)' },
+          ticks: { color: '#64748b' },
+          grid: { color: 'rgba(148, 163, 184, 0.28)' },
         },
       },
     },
@@ -121,14 +121,14 @@ onBeforeUnmount(() => {
 <template>
   <div
     :class="[
-      'rounded-xl border border-slate-700/80 bg-slate-900/50 p-4 shadow-inner ring-1 ring-slate-800/60',
+      'rounded-xl border border-slate-200 bg-white p-4 shadow-sm ring-1 ring-slate-100',
       embedded ? 'mb-0' : 'mb-6',
     ]"
   >
-    <p class="mb-3 text-[11px] leading-snug text-slate-400">
-      <span class="font-medium text-slate-300">{{ config.title }}</span>
+    <p class="mb-3 text-[11px] leading-snug text-slate-500">
+      <span class="font-medium text-slate-800">{{ config.title }}</span>
       · tipo inferido:
-      <span class="text-indigo-300">
+      <span class="text-indigo-700">
         {{
           config.chartKind === 'area'
             ? 'área preenchida (eixo temporal / períodos)'

@@ -49,6 +49,45 @@ function stripPageHeading(chunk: string): string {
   return chunk.replace(/^##\s+P[^\n\d]*gina\s+\d+\s+\u2014[^\n]*\n+/, '').trimEnd()
 }
 
+function normalizeComparableText(body: string): string {
+  return foldDiacritics(body)
+    .replace(/```[\s\S]*?```/g, (m) => m.replace(/```[a-z]*|```/gi, ' '))
+    .replace(/_Colunas inferidas[^.]*\./gi, ' ')
+    .replace(/[_#*`>|[\](){}.,;:!?%$/"'\\+-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+function tokenSet(body: string): Set<string> {
+  return new Set(
+    normalizeComparableText(body)
+      .split(/\s+/)
+      .filter((token) => token.length >= 3 || /\d/.test(token)),
+  )
+}
+
+function containmentSimilarity(candidate: string, reference: string): number {
+  const candidateTokens = tokenSet(candidate)
+  const referenceTokens = tokenSet(reference)
+  if (candidateTokens.size < 12 || referenceTokens.size < 12) return 0
+  let overlap = 0
+  for (const token of candidateTokens) {
+    if (referenceTokens.has(token)) overlap++
+  }
+  return overlap / candidateTokens.size
+}
+
+function isDuplicateSection(kind: PreviewPageSectionKind, body: string, accepted: PreviewPageSection[]): boolean {
+  if (kind === 'unknown') return false
+  const textSection = accepted.find((section) => section.kind === 'texto')
+  if (!textSection) return false
+  const similarity = containmentSimilarity(body, textSection.bodyMarkdown)
+  if (kind === 'ocr') return similarity >= 0.68
+  if (kind === 'layout') return similarity >= 0.86
+  return false
+}
+
 function parsePageNum(chunk: string): number {
   const m = chunk.match(/^##\s+P[^\n\d]*gina\s+(\d+)/i)
   return m ? parseInt(m[1]!, 10) : 1
@@ -102,6 +141,7 @@ export function groupMarkdownPagesForPreview(markdown: string): GroupedMarkdownF
       if (!bucket?.bodies.length) continue
       const bodyMarkdown = bucket.bodies.filter((b) => b.trim()).join('\n\n')
       if (!bodyMarkdown.trim()) continue
+      if (isDuplicateSection(kind, bodyMarkdown, sections)) continue
       sections.push({
         kind,
         title: displayTitle(kind, bucket.headingLine),

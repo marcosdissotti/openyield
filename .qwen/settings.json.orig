@@ -59,7 +59,8 @@
       "Bash(node *)",
       "Bash(npm rebuild *)",
       "Bash(rm *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   },
   "$version": 4

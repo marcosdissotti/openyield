@@ -20,6 +20,8 @@ export interface PdfSourcesElectronApi {
   vectorInicializar: () => Promise<void>
   vectorAdicionar: (texto: string, metadados?: VectorMetadata) => Promise<{ id: string }>
   vectorBuscar: (queryTexto: string, limite?: number) => Promise<VectorSearchResult[]>
+  vectorBuscarChunksNotebook: (queryTexto: string, notebookId: string, limite?: number) => Promise<VectorSearchResult[]>
+  vectorGarantirChunksNotebook: (notebookId: string) => Promise<{ documentsIndexed: number; chunksIndexed: number }>
   pdfDbLoadWorkspace: () => Promise<{
     notebooks: NotebookRow[]
     activeNotebookId: string | null
@@ -51,6 +53,9 @@ const api: PdfSourcesElectronApi = {
   vectorInicializar: async () => ipcRenderer.invoke('vector-inicializar'),
   vectorAdicionar: async (texto, metadados) => ipcRenderer.invoke('vector-adicionar', texto, metadados),
   vectorBuscar: async (queryTexto, limite) => ipcRenderer.invoke('vector-buscar', queryTexto, limite),
+  vectorBuscarChunksNotebook: async (queryTexto, notebookId, limite) =>
+    ipcRenderer.invoke('vector-buscar-chunks-notebook', queryTexto, notebookId, limite),
+  vectorGarantirChunksNotebook: async (notebookId) => ipcRenderer.invoke('vector-garantir-chunks-notebook', notebookId),
   pdfDbLoadWorkspace: async () => ipcRenderer.invoke('pdf-db-load-workspace'),
   pdfDbUpsertNotebook: async (row) => ipcRenderer.invoke('pdf-db-upsert-notebook', row),
   pdfDbDeleteNotebook: async (notebookId) => ipcRenderer.invoke('pdf-db-delete-notebook', notebookId),

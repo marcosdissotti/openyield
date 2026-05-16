@@ -21,6 +21,14 @@ export function registerVectorIpc(): void {
     return service.buscarSimilares(String(queryTexto ?? ''), limite)
   })
 
+  ipcMain.handle('vector-buscar-chunks-notebook', async (_event, queryTexto: string, notebookId: string, limite?: number) => {
+    return service.buscarChunksDoNotebook(String(queryTexto ?? ''), String(notebookId ?? ''), limite)
+  })
+
+  ipcMain.handle('vector-garantir-chunks-notebook', async (_event, notebookId: string) => {
+    return service.garantirChunksDoNotebook(String(notebookId ?? ''))
+  })
+
   ipcMain.handle('pdf-db-load-workspace', async () => service.loadWorkspaceState())
 
   ipcMain.handle(

@@ -25,3 +25,21 @@ export async function vectorBuscarSimilares(queryTexto: string, limite = 5): Pro
   if (!api?.vectorBuscar) return []
   return api.vectorBuscar(queryTexto, limite)
 }
+
+export async function vectorBuscarChunksDoNotebook(
+  queryTexto: string,
+  notebookId: string,
+  limite = 12,
+): Promise<VectorSearchResult[]> {
+  const api = window.pdfSourcesElectron
+  if (!api?.vectorBuscarChunksNotebook) return []
+  return api.vectorBuscarChunksNotebook(queryTexto, notebookId, limite)
+}
+
+export async function vectorGarantirChunksDoNotebook(
+  notebookId: string,
+): Promise<{ documentsIndexed: number; chunksIndexed: number } | null> {
+  const api = window.pdfSourcesElectron
+  if (!api?.vectorGarantirChunksNotebook) return null
+  return api.vectorGarantirChunksNotebook(notebookId)
+}

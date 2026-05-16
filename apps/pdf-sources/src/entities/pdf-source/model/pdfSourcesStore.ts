@@ -39,7 +39,7 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
     selectedId.value = next?.id ?? null
   }
 
-  function addPending(file: File, notebookId: string): string {
+  function addPending(file: File, notebookId: string, opts: { select?: boolean } = {}): string {
     const id = crypto.randomUUID()
     sources.value.push({
       id,
@@ -50,7 +50,7 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
       llmMarkdown: '',
       status: 'pending',
     })
-    selectedId.value = id
+    if (opts.select ?? !selectedId.value) selectedId.value = id
     return id
   }
 

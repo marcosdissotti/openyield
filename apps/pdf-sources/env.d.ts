@@ -17,6 +17,12 @@ export interface PdfSourcesElectronApi {
     queryTexto: string,
     limite?: number,
   ) => Promise<Array<{ id: string; score: number; metadata: Record<string, unknown> }>>
+  vectorBuscarChunksNotebook?: (
+    queryTexto: string,
+    notebookId: string,
+    limite?: number,
+  ) => Promise<Array<{ id: string; score: number; metadata: Record<string, unknown> }>>
+  vectorGarantirChunksNotebook?: (notebookId: string) => Promise<{ documentsIndexed: number; chunksIndexed: number }>
   pdfDbLoadWorkspace?: () => Promise<{
     notebooks: NotebookRow[]
     activeNotebookId: string | null

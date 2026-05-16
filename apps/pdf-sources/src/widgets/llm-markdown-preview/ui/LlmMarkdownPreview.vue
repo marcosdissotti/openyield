@@ -2,7 +2,11 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { createPdfPagePngObjectUrl, createPdfPageThumbnailUrls } from '../lib/createPdfPageThumbnailUrls'
+import {
+  createPdfPagePngObjectUrl,
+  createPdfPageRegionPngObjectUrl,
+  createPdfPageThumbnailUrls,
+} from '../lib/createPdfPageThumbnailUrls'
 import { groupMarkdownPagesForPreview } from '../lib/groupMarkdownPagesForPreview'
 import { buildPagePreviewVisualMap } from '#widgets/chart-reconstruct/lib/buildPagePreviewVisualMap'
 import { extractVisionChartJsonByPage } from '../lib/extractVisionChartJsonByPage'
@@ -36,6 +40,62 @@ function mdToHtml(md: string): string {
 
 const docView = computed(() => groupMarkdownPagesForPreview(stripVisionEnrichmentAppendix(props.markdown || '')))
 
+function compactMarkdownText(md: string): string {
+  return md
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#*_`>|[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function unspaceQuarterToken(text: string): string {
+  return text.replace(/\b([1-4])\s*T\s*([0-9])\s*([0-9])\b/gi, '$1T$2$3')
+}
+
+function releasePeriodLabel(text: string): string | null {
+  const normalized = unspaceQuarterToken(text)
+  const quarterMatch =
+    normalized.match(/\b([1-4])T(\d{2})\b/i) ??
+    normalized.match(/\b([1-4])[ºo]?\s+trimestre\s+de\s+(20\d{2})\b/i)
+  if (!quarterMatch) return null
+  const quarter = quarterMatch[1]!
+  const yy = quarterMatch[2]!
+  const year = yy.length === 2 ? `20${yy}` : yy
+  const quarterToken = `${quarter}T${year.slice(-2)}`
+  const hasAnnual = new RegExp(`(exerc[ií]cio|acumulad[oa]|ano).*${year}`, 'i').test(normalized)
+  return `${quarter}º Trimestre de ${year} (${quarterToken})${hasAnnual ? ` e acumulado do exercício de ${year}` : ''}`
+}
+
+function releaseDateLabel(text: string): string | null {
+  const m = text.match(/\b(\d{1,2}\s+de\s+[a-zç]+(?:\s+de)?\s+20\d{2})\b/i)
+  return m?.[1]?.replace(/\s+/g, ' ') ?? null
+}
+
+const documentHeader = computed(() => {
+  const markdown = stripVisionEnrichmentAppendix(props.markdown || '')
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? ''
+  const text = compactMarkdownText(markdown)
+  const b3 = text.match(/\bB3\s*:\s*([A-Z]{4}\d{1,2})\b/i)
+  const copasa = /\bCOPASA\s+MG\b/i.test(text)
+  const company = copasa ? 'COPASA MG (Companhia de Saneamento de Minas Gerais)' : null
+  const ticker = b3?.[1]?.toUpperCase() ?? null
+  const period = releasePeriodLabel(text)
+  const releaseDate = releaseDateLabel(text)
+  const facts = [
+    company ? { label: 'Empresa', value: company } : null,
+    ticker ? { label: 'Ticker', value: `${ticker} (B3)` } : null,
+    period ? { label: 'Período', value: period } : null,
+    releaseDate ? { label: 'Divulgação', value: releaseDate } : null,
+  ].filter((x): x is { label: string; value: string } => x != null)
+  return { title, facts }
+})
+
+const preambleWithoutTitle = computed(() => {
+  const view = docView.value
+  if (view.mode !== 'structured') return ''
+  return (view.preambleMarkdown ?? '').replace(/^#\s+.+\n*/, '').trim()
+})
+
 const visionVisualByPage = computed(() => {
   const m = extractVisionChartJsonByPage(props.markdown || '')
   const out = new Map<number, VisionPageVisual>()
@@ -60,9 +120,31 @@ const thumbs = ref<string[]>([])
 const thumbsLoading = ref(false)
 const thumbsError = ref(false)
 let objectUrls: string[] = []
+const visualSnaps = ref<Map<number, string>>(new Map())
+const visualSnapsLoading = ref(false)
+let visualObjectUrls: string[] = []
 
 function thumbForPage(pageNum: number): string | undefined {
   return thumbs.value[pageNum - 1]
+}
+
+function visualSnapForPage(pageNum: number): string | undefined {
+  return visualSnaps.value.get(pageNum)
+}
+
+function visualEvidencePages(): number[] {
+  const pages = new Set<number>()
+  for (const pageNum of pagePreviewByPage.value.keys()) pages.add(pageNum)
+  for (const pageNum of visionVisualByPage.value.keys()) pages.add(pageNum)
+  return Array.from(pages).sort((a, b) => a - b)
+}
+
+function evidenceCropForPage(pageNum: number): { x: number; y: number; w: number; h: number } {
+  const visual = pagePreviewByPage.value.get(pageNum)
+  if (visual?.mode === 'chart' && visual.companionTables?.length) return { x: 0, y: 0, w: 1, h: 0.55 }
+  if (visual?.mode === 'chart') return { x: 0, y: 0, w: 1, h: 0.62 }
+  if (visual?.mode === 'table') return { x: 0, y: 0, w: 1, h: 0.58 }
+  return { x: 0, y: 0, w: 1, h: 0.62 }
 }
 
 function showThumbColumn(pageNum: number): boolean {
@@ -161,6 +243,14 @@ function revokeThumbs() {
   thumbs.value = []
 }
 
+function revokeVisualSnaps() {
+  for (const u of visualObjectUrls) {
+    URL.revokeObjectURL(u)
+  }
+  visualObjectUrls = []
+  visualSnaps.value = new Map()
+}
+
 watch(
   () => props.file,
   async (file) => {
@@ -182,28 +272,68 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => [props.file, props.markdown] as const,
+  async ([file]) => {
+    revokeVisualSnaps()
+    if (!file) return
+    const pages = visualEvidencePages()
+    if (!pages.length) return
+    visualSnapsLoading.value = true
+    try {
+      const entries: Array<[number, string]> = []
+      for (const pageNum of pages) {
+        const url = await createPdfPageRegionPngObjectUrl(file, pageNum, evidenceCropForPage(pageNum), 1.25)
+        visualObjectUrls.push(url)
+        entries.push([pageNum, url])
+      }
+      visualSnaps.value = new Map(entries)
+    } catch {
+      revokeVisualSnaps()
+    } finally {
+      visualSnapsLoading.value = false
+    }
+  },
+  { immediate: true },
+)
+
 onUnmounted(() => {
   closePagePreview()
   revokeThumbs()
+  revokeVisualSnaps()
 })
 </script>
 
 <template>
   <div
     data-cy="source-markdown-panel"
-    class="llm-md-preview flex min-h-0 flex-1 flex-col gap-4 text-slate-200"
+    class="llm-md-preview flex min-h-0 flex-1 flex-col gap-4 text-slate-700"
   >
     <article
-      class="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-4 shadow-inner sm:px-5 sm:py-6"
+      class="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white px-3 py-4 shadow-sm sm:px-5 sm:py-6"
     >
       <template v-if="docView.mode === 'single'">
         <div class="markdown-body" v-html="mdToHtml(docView.markdown)" />
       </template>
       <template v-else>
+        <header v-if="documentHeader.title" class="mb-6 border-b border-slate-200 pb-5">
+          <h1 class="text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
+            {{ documentHeader.title }}
+          </h1>
+          <dl
+            v-if="documentHeader.facts.length"
+            class="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-4"
+          >
+            <div v-for="fact in documentHeader.facts" :key="fact.label" class="min-w-0">
+              <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{{ fact.label }}</dt>
+              <dd class="mt-1 text-xs font-medium leading-5 text-slate-800">{{ fact.value }}</dd>
+            </div>
+          </dl>
+        </header>
         <div
-          v-if="docView.preambleMarkdown && docView.preambleMarkdown.trim()"
+          v-if="preambleWithoutTitle"
           class="markdown-body mb-6"
-          v-html="mdToHtml(docView.preambleMarkdown)"
+          v-html="mdToHtml(preambleWithoutTitle)"
         />
         <section
           v-for="(pb, pi) in docView.pages"
@@ -216,7 +346,7 @@ onUnmounted(() => {
           >
             <figure
               v-if="showThumbColumn(pb.pageNum) && thumbForPage(pb.pageNum)"
-              class="overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900 shadow-lg ring-1 ring-black/25 lg:sticky lg:top-2"
+              class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-100 lg:sticky lg:top-2"
             >
               <button
                 type="button"
@@ -247,16 +377,16 @@ onUnmounted(() => {
 
             <div
               v-else-if="showThumbColumn(pb.pageNum) && thumbsLoading"
-              class="flex max-w-[16rem] flex-col justify-center gap-2 rounded-xl border border-dashed border-slate-600 bg-slate-900/40 p-4 text-center lg:sticky lg:top-2"
+              class="flex max-w-[16rem] flex-col justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center lg:sticky lg:top-2"
               aria-busy="true"
             >
-              <span class="mx-auto h-8 w-8 animate-pulse rounded-full bg-slate-700" />
+              <span class="mx-auto h-8 w-8 animate-pulse rounded-full bg-slate-200" />
               <span class="text-[11px] text-slate-500">A carregar miniatura…</span>
             </div>
 
             <div
               v-else-if="showThumbColumn(pb.pageNum) && !thumbsLoading && !thumbForPage(pb.pageNum)"
-              class="max-w-[16rem] rounded-xl border border-slate-700/60 bg-slate-900/30 p-3 text-center lg:sticky lg:top-2"
+              class="max-w-[16rem] rounded-xl border border-slate-200 bg-slate-50 p-3 text-center lg:sticky lg:top-2"
             >
               <span class="text-[11px] text-slate-500">{{
                 thumbsError ? 'Miniaturas indisponíveis' : 'Sem miniatura para esta página'
@@ -271,6 +401,29 @@ onUnmounted(() => {
               <div v-for="sec in pb.sections" :key="sec.kind" class="space-y-2">
                 <h3 class="preview-page-subsection">{{ sec.title }}</h3>
                 <div class="markdown-body markdown-body--slice min-w-0" v-html="mdToHtml(sec.bodyMarkdown)" />
+              </div>
+              <figure
+                v-if="visualSnapForPage(pb.pageNum)"
+                class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                :data-cy="`page-${pb.pageNum}-visual-evidence`"
+              >
+                <div class="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                  <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    Recorte original para conferência
+                  </p>
+                </div>
+                <img
+                  :src="visualSnapForPage(pb.pageNum)"
+                  :alt="`Recorte visual da página ${pb.pageNum}`"
+                  class="block max-h-[24rem] w-full object-contain"
+                  loading="lazy"
+                />
+              </figure>
+              <div
+                v-else-if="visualSnapsLoading && (pageHasOcrDerivedVisuals(pb.pageNum) || visionVisualForPage(pb.pageNum))"
+                class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500"
+              >
+                A preparar recorte visual…
               </div>
               <PageDocumentVisualBlock
                 v-if="pageHasOcrDerivedVisuals(pb.pageNum)"
@@ -380,19 +533,19 @@ onUnmounted(() => {
 
 <style scoped>
 .preview-page-title {
-  @apply mb-1 scroll-mt-4 border-l-4 border-indigo-500 pl-3 text-base font-semibold text-indigo-100;
+  @apply mb-1 scroll-mt-4 border-l-4 border-indigo-500 pl-3 text-base font-semibold text-slate-950;
 }
 
 .preview-page-subsection {
-  @apply border-b border-slate-700/70 pb-1.5 text-sm font-semibold uppercase tracking-wide text-slate-300;
+  @apply border-b border-slate-200 pb-1.5 text-sm font-semibold uppercase tracking-wide text-slate-600;
 }
 
 .markdown-body :deep(h1) {
-  @apply mb-4 border-b border-slate-700 pb-2 text-xl font-semibold tracking-tight text-white;
+  @apply mb-4 border-b border-slate-200 pb-2 text-xl font-semibold tracking-tight text-slate-950;
 }
 
 .markdown-body :deep(h2) {
-  @apply mb-3 mt-8 scroll-mt-4 border-l-4 border-indigo-500 pl-3 text-base font-semibold text-indigo-100 first:mt-0;
+  @apply mb-3 mt-8 scroll-mt-4 border-l-4 border-indigo-500 pl-3 text-base font-semibold text-slate-950 first:mt-0;
 }
 
 .markdown-body--slice :deep(h2:first-of-type) {
@@ -400,24 +553,24 @@ onUnmounted(() => {
 }
 
 .markdown-body :deep(h3) {
-  @apply mb-2 mt-5 text-sm font-semibold text-slate-200;
+  @apply mb-2 mt-5 text-sm font-semibold text-slate-800;
 }
 
 .markdown-body :deep(p) {
-  @apply mb-3 text-sm leading-relaxed text-slate-300 last:mb-0;
+  @apply mb-3 text-sm leading-relaxed text-slate-700 last:mb-0;
 }
 
 .markdown-body :deep(strong) {
-  @apply font-semibold text-slate-100;
+  @apply font-semibold text-slate-950;
 }
 
 .markdown-body :deep(em) {
-  @apply text-slate-200;
+  @apply text-slate-700;
 }
 
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) {
-  @apply mb-3 ml-5 text-sm text-slate-300;
+  @apply mb-3 ml-5 text-sm text-slate-700;
 }
 
 .markdown-body :deep(li) {
@@ -425,15 +578,15 @@ onUnmounted(() => {
 }
 
 .markdown-body :deep(blockquote) {
-  @apply my-3 border-l-4 border-slate-600 pl-3 text-sm italic text-slate-400;
+  @apply my-3 border-l-4 border-slate-300 pl-3 text-sm italic text-slate-500;
 }
 
 .markdown-body :deep(code) {
-  @apply rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[0.8rem] text-amber-100/95;
+  @apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.8rem] text-indigo-700;
 }
 
 .markdown-body :deep(pre) {
-  @apply my-3 overflow-x-auto rounded-lg border border-slate-700 bg-slate-900/90 p-3 font-mono text-xs leading-relaxed text-emerald-100/90;
+  @apply my-3 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs leading-relaxed text-slate-700;
 }
 
 .markdown-body :deep(pre code) {
@@ -441,27 +594,27 @@ onUnmounted(() => {
 }
 
 .markdown-body :deep(a) {
-  @apply text-indigo-400 underline decoration-indigo-500/40 underline-offset-2 transition hover:text-indigo-300;
+  @apply text-indigo-700 underline decoration-indigo-300 underline-offset-2 transition hover:text-indigo-900;
 }
 
 .markdown-body :deep(hr) {
-  @apply my-6 border-slate-700;
+  @apply my-6 border-slate-200;
 }
 
 .markdown-body :deep(table) {
-  @apply my-3 w-full border-collapse overflow-hidden rounded-md border border-slate-700 text-sm;
+  @apply my-3 w-full border-collapse overflow-hidden rounded-md border border-slate-200 text-sm;
 }
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  @apply border border-slate-700 px-2 py-1.5 text-left;
+  @apply border border-slate-200 px-2 py-1.5 text-left;
 }
 
 .markdown-body :deep(th) {
-  @apply bg-slate-800/80 text-slate-200;
+  @apply bg-slate-100 text-slate-800;
 }
 
 .markdown-body :deep(img) {
-  @apply my-3 max-h-72 max-w-full rounded-lg border border-slate-600 object-contain shadow-lg;
+  @apply my-3 max-h-72 max-w-full rounded-lg border border-slate-200 object-contain shadow-sm;
 }
 </style>
