@@ -17,6 +17,9 @@ export interface LlmDiscoveredModel {
 interface PersistedShape {
   llmServerBaseUrl: string
   chatModelName: string
+  llmApiToken?: string
+  hfToken?: string
+  llmApiTokenVisible?: boolean
 }
 
 function loadPersisted(): Partial<PersistedShape> {
@@ -39,8 +42,8 @@ function savePersisted(p: PersistedShape) {
 
 function pickFirstChatLikeModelId(models: LlmDiscoveredModel[]): string {
   const ids = models.map((m) => m.id)
-  const nonEmbed = ids.find((id) => !/embed|embedding/i.test(id))
-  return (nonEmbed ?? ids[0]) ?? ''
+  const chatLike = ids.filter((id) => !/embed|embedding|rerank/i.test(id))
+  return (chatLike[0] ?? ids[0]) ?? ''
 }
 
 export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
@@ -50,7 +53,11 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     typeof persisted.llmServerBaseUrl === 'string' ? persisted.llmServerBaseUrl : LM_STUDIO_DEFAULT_BASE_URL,
   )
   const chatModelName = ref(persisted.chatModelName ?? '')
+  const llmApiToken = ref(persisted.llmApiToken ?? '')
+  const hfToken = ref(persisted.hfToken ?? '')
   const discoveredModels = ref<LlmDiscoveredModel[]>([])
+
+  const llmApiTokenVisible = ref(!!persisted.llmApiTokenVisible)
   const modelsListError = ref<string | null>(null)
   const modelsListLoading = ref(false)
 
@@ -72,47 +79,61 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     savePersisted({
       llmServerBaseUrl: llmServerBaseUrl.value,
       chatModelName: chatModelName.value,
+      llmApiToken: llmApiToken.value,
+      hfToken: hfToken.value,
+      llmApiTokenVisible: llmApiTokenVisible.value,
     })
   }
 
-  watch([llmServerBaseUrl, chatModelName], persist)
+  watch([llmServerBaseUrl, chatModelName, llmApiToken, hfToken, llmApiTokenVisible], persist, { flush: 'sync' })
 
-  async function refreshDiscoveredModels(): Promise<void> {
+  let modelsRefreshRun = 0
+
+  async function refreshDiscoveredModels(options: { silent?: boolean } = {}): Promise<void> {
+    const run = ++modelsRefreshRun
     modelsListError.value = null
-    modelsListLoading.value = true
+    if (!options.silent) {
+      modelsListLoading.value = true
+      connectionStatus.value = 'checking'
+    }
     try {
       const base = effectiveServerBase.value
       if (!base) {
+        if (run !== modelsRefreshRun) return
         discoveredModels.value = []
         modelsListError.value = 'URL base vazia (defina em Ajustes ou VITE_LLM_API_BASE no build).'
+        connectionStatus.value = 'idle'
         return
       }
-      const list = await listOpenAiCompatibleModels(base)
+      const list = await listOpenAiCompatibleModels(base, llmApiToken.value)
+      if (run !== modelsRefreshRun) return
       discoveredModels.value = list
-      if (list.length && !chatModelName.value.trim()) {
+      if (list.length) {
         chatModelName.value = pickFirstChatLikeModelId(list)
       }
+      connectionStatus.value = 'ok'
+      lastError.value = null
     } catch (e) {
+      if (run !== modelsRefreshRun) return
       discoveredModels.value = []
       modelsListError.value = e instanceof LlamaRuntimeError ? e.message : String(e)
+      connectionStatus.value = 'error'
+      lastError.value = modelsListError.value
     } finally {
-      modelsListLoading.value = false
+      if (run === modelsRefreshRun) modelsListLoading.value = false
     }
-  }
-
-  let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null
-  function scheduleRefreshDiscoveredModels(): void {
-    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer)
-    refreshDebounceTimer = setTimeout(() => {
-      refreshDebounceTimer = null
-      void refreshDiscoveredModels()
-    }, 350)
   }
 
   watch(
     () => effectiveServerBase.value,
     () => {
-      scheduleRefreshDiscoveredModels()
+      modelsRefreshRun++
+      discoveredModels.value = []
+      chatModelName.value = ''
+      modelsListLoading.value = false
+      modelsListError.value = null
+      lastError.value = null
+      connectionStatus.value = 'idle'
     },
     { flush: 'post' },
   )
@@ -134,6 +155,7 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
       }
       await chatCompletion({
         baseUrl: effectiveServerBase.value,
+        apiToken: llmApiToken.value,
         model,
         messages: [{ role: 'user', content: 'ping' }],
         timeoutMs: 15_000,
@@ -161,9 +183,28 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     chatModelName.value = ''
   }
 
+  function setLlmApiToken(token: string) {
+    llmApiToken.value = token
+    persist()
+  }
+
+  function disconnect() {
+    modelsRefreshRun++
+    discoveredModels.value = []
+    chatModelName.value = ''
+    modelsListLoading.value = false
+    modelsListError.value = null
+    lastError.value = null
+    connectionStatus.value = 'idle'
+    persist()
+  }
+
   return {
     llmServerBaseUrl,
     chatModelName,
+    llmApiToken,
+    llmApiTokenVisible,
+    hfToken,
     discoveredModels,
     modelsListError,
     modelsListLoading,
@@ -176,6 +217,8 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     canRunVision,
     setChatModelId,
     clearModelSelection,
+    setLlmApiToken,
+    disconnect,
     persist,
   }
 })

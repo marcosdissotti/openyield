@@ -16,7 +16,7 @@ export interface VisionChartJson {
 
 export type VisionParsed = { kind: 'chartjs'; value: VisionChartJson } | { kind: 'legacy'; value: VisionJsonLegacy }
 
-const ROOT_CHART_TYPES = new Set(['bar', 'line', 'pie', 'scatter', 'radar', 'bubble', 'doughnut'])
+const ROOT_CHART_TYPES = new Set(['bar', 'line', 'area', 'pie', 'scatter', 'radar', 'bubble', 'doughnut'])
 
 function inferChartTypeFromPayload(obj: Record<string, unknown>): string {
   if (typeof obj.chartType === 'string' && obj.chartType.trim()) {

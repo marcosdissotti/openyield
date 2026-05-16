@@ -1,4 +1,4 @@
-export type InferredChartKind = 'line' | 'bar'
+export type InferredChartKind = 'line' | 'bar' | 'area'
 
 export interface OcrChartDataset {
   label: string

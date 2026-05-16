@@ -3,7 +3,7 @@ import { buildPagePreviewVisualMap } from '#widgets/chart-reconstruct/lib/buildP
 export interface SelectVisionPagesOptions {
   /**
    * Páginas com **bitmap embutido** no PDF (1-based), vindas da extração (`bitmapPageNumbers`).
-   * Páginas já classificadas como **tabela** no preview (layout TSV) **não** são enviadas ao VL, mesmo com bitmap.
+   * Mesmo quando o layout textual parece tabela, a página pode conter gráfico raster acima da tabela.
    */
   bitmapPageNumbers?: readonly number[]
 }
@@ -12,8 +12,8 @@ export interface SelectVisionPagesOptions {
  * Páginas candidatas ao enriquecimento por visão (LLM multimodal).
  *
  * - Inclui páginas em que o preview inferiu **gráfico** (`mode: chart`) a partir de OCR/layout.
- * - Inclui páginas com **bitmap** no PDF **desde que** o preview **não** as classifique como **só tabela**
- *   (`mode: table` no layout TSV) — quadros financeiros tabulares deixam de ir para a IA.
+ * - Inclui páginas com **bitmap** no PDF. Quando o preview classifica como tabela, o enriquecimento
+ *   usa recorte superior para capturar gráficos acima de quadros tabulares sem enviar a tabela inteira.
  */
 export function selectPagesForVisionEnrich(
   llmMarkdown: string,
@@ -27,7 +27,6 @@ export function selectPagesForVisionEnrich(
     if (v.mode === 'chart') candidates.add(pageNum)
   }
   for (const p of bitmap) {
-    if (map.get(p)?.mode === 'table') continue
     candidates.add(p)
   }
   return [...candidates].sort((a, b) => a - b)

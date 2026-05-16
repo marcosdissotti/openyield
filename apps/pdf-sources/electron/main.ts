@@ -3,9 +3,8 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadPdfSourcesDotEnv } from './appEnv'
-import { getActiveNotebookId, getPdfDb } from './pdfDb'
 import { readHardwareSummary } from './hardware'
-import { registerPdfDbIpc } from './pdfDbIpc'
+import { registerVectorIpc } from './vectorIpc'
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
 
@@ -13,9 +12,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const mainDir = __dirname
 loadPdfSourcesDotEnv(path.join(mainDir, '..'), process.cwd())
 
-/** dbPath está aqui apenas para compatibilidade caso seja chamado em outro lugar */
-function dbPath(): string {
-  return path.join(app.getPath('userData'), 'pdf-sources-data', 'library.sqlite')
+function vectorDbPath(): string {
+  return path.join(app.getPath('userData'), 'vectra', 'documents')
 }
 
 function resolvePreloadPath(): string {
@@ -60,12 +58,11 @@ function createWindow() {
     void win.loadFile(indexHtml)
   }
 
-  // Log de inicialização do banco
-  console.info('[pdf-sources] App iniciado. Banco de dados em:', dbPath())
+  console.info('[pdf-sources] App iniciado. Índice Vectra em:', vectorDbPath())
 }
 
 ipcMain.handle('get-hardware-summary', async () => readHardwareSummary())
-registerPdfDbIpc()
+registerVectorIpc()
 
 app.whenReady().then(() => {
   createWindow()

@@ -76,6 +76,41 @@ function numericDensity(rows: { label: string; cells: unknown[] }[]): number {
   return tot === 0 ? 0 : num / tot
 }
 
+function labelsLookYearly(labels: string[]): boolean {
+  if (labels.length < 4) return false
+  const hits = labels.filter((l) => /^\s*(?:19|20)\d{2}\s*$/.test(l)).length
+  return hits >= Math.ceil(labels.length * 0.7)
+}
+
+function isNearlyArithmetic(data: number[]): boolean {
+  const vals = data.filter((v) => Number.isFinite(v))
+  if (vals.length < 5) return false
+  const diffs: number[] = []
+  for (let i = 1; i < vals.length; i++) diffs.push(vals[i]! - vals[i - 1]!)
+  const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length
+  if (Math.abs(avg) < 1e-6) return false
+  const maxErr = Math.max(...diffs.map((d) => Math.abs(d - avg)))
+  return maxErr <= Math.max(0.75, Math.abs(avg) * 0.08)
+}
+
+function looksLikeSyntheticVisionChart(
+  reported: string,
+  title: string,
+  labels: string[],
+  datasets: { label: string; data: number[] }[],
+): boolean {
+  if (!datasets.length) return false
+  const values = datasets.flatMap((d) => d.data).filter((v) => Number.isFinite(v))
+  if (!values.length) return false
+  const blob = `${reported} ${title} ${datasets.map((d) => d.label).join(' ')}`.toLowerCase()
+  const likelyPercentChart = /%|percent|porcent|volume agregado|agregado do sistema/.test(blob)
+  if (likelyPercentChart && Math.max(...values) > 105) return true
+  if ((reported === 'area' || reported === 'line') && labelsLookYearly(labels)) {
+    return datasets.some((d) => isNearlyArithmetic(d.data))
+  }
+  return false
+}
+
 function buildTableFromVision(
   pageNum: number,
   title: string,
@@ -114,7 +149,7 @@ function buildChartFromVision(
   title: string,
   labels: string[],
   rows: { label: string; cells: unknown[] }[],
-  chartKind: 'bar' | 'line',
+  chartKind: 'bar' | 'line' | 'area',
 ): OcrChartReconstruction | null {
   const maxLen = Math.max(1, ...rows.map((r) => r.cells.length))
   const labs: string[] = []
@@ -134,6 +169,7 @@ function buildChartFromVision(
     }
   }
   if (datasets.length === 0) return null
+  if (looksLikeSyntheticVisionChart(chartKind, title, labs, datasets)) return null
   return {
     pageNum,
     chartKind,
@@ -169,7 +205,8 @@ export function visionRecordToPageVisual(
     return { kind: 'table', pageNum, reportedChartType: reported || 'table', tables: [t] }
   }
 
-  const chartKind: 'bar' | 'line' = reported === 'line' ? 'line' : 'bar'
+  const chartKind: 'bar' | 'line' | 'area' =
+    reported === 'area' ? 'area' : reported === 'line' ? 'line' : 'bar'
   const cfg = buildChartFromVision(pageNum, title, labels, rows, chartKind)
   if (!cfg) return null
   return { kind: 'chart', pageNum, reportedChartType: reported || chartKind, config: cfg }

@@ -1,13 +1,11 @@
 import type { DocumentRow, NotebookRow } from '#shared/model/pdfLibraryDb'
 
-export type { DocumentRow, NotebookRow }
-
 export async function pdfDbLoadWorkspace(): Promise<{
   notebooks: NotebookRow[]
   activeNotebookId: string | null
   documents: DocumentRow[]
 } | null> {
-  const api = typeof window !== 'undefined' ? window.pdfSourcesElectron : undefined
+  const api = window.pdfSourcesElectron
   if (!api?.pdfDbLoadWorkspace) return null
   return api.pdfDbLoadWorkspace()
 }
@@ -17,8 +15,7 @@ export async function pdfDbUpsertNotebook(row: {
   title: string
   ticker: string | null
 }): Promise<void> {
-  const api = window.pdfSourcesElectron
-  await api?.pdfDbUpsertNotebook?.(row)
+  await window.pdfSourcesElectron?.pdfDbUpsertNotebook?.(row)
 }
 
 export async function pdfDbDeleteNotebook(notebookId: string): Promise<void> {
@@ -42,18 +39,22 @@ export async function pdfDbPersistDocument(payload: {
     body_markdown: string
     sort_order: number
   }>
-}): Promise<{ pdfPath: string; fileSha256: string } | undefined> {
-  const r = await window.pdfSourcesElectron?.pdfDbPersistDocument?.(payload)
-  return r === undefined ? undefined : r
+}): Promise<{ pdfPath: string; fileSha256: string } | void> {
+  return window.pdfSourcesElectron?.pdfDbPersistDocument?.(payload)
 }
 
 export async function pdfDbDeleteDocument(documentId: string): Promise<void> {
   await window.pdfSourcesElectron?.pdfDbDeleteDocument?.(documentId)
 }
 
+export async function pdfDbReadDocumentFile(documentId: string): Promise<File | null> {
+  const payload = await window.pdfSourcesElectron?.pdfDbReadDocumentPdf?.(documentId)
+  if (!payload) return null
+  return new File([payload.bytes], payload.fileName, { type: 'application/pdf' })
+}
+
 export function isPdfDbAvailable(): boolean {
   return !!(
-    typeof window !== 'undefined' &&
     window.pdfSourcesElectron?.pdfDbLoadWorkspace &&
     window.pdfSourcesElectron?.pdfDbPersistDocument
   )

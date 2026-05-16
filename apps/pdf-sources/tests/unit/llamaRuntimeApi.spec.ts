@@ -49,6 +49,25 @@ describe('llamaRuntimeApi', () => {
     expect(fetchMock).toHaveBeenCalled()
   })
 
+  it('envia Authorization Bearer quando apiToken é passado', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>
+      expect(headers.Authorization).toBe('Bearer secret-token')
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    await chatCompletion({
+      baseUrl: 'http://x',
+      apiToken: ' secret-token ',
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    expect(fetchMock).toHaveBeenCalled()
+  })
+
   it('listOpenAiCompatibleModels parses data[].id', async () => {
     vi.stubGlobal(
       'fetch',
@@ -60,6 +79,20 @@ describe('llamaRuntimeApi', () => {
       })) as unknown as typeof fetch,
     )
     const out = await listOpenAiCompatibleModels('http://x')
+    expect(out).toEqual([{ id: 'my-model' }])
+  })
+
+  it('listOpenAiCompatibleModels envia Authorization Bearer quando apiToken é passado', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>
+      expect(headers.Authorization).toBe('Bearer model-token')
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: 'my-model' }] }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const out = await listOpenAiCompatibleModels('http://x', 'model-token')
     expect(out).toEqual([{ id: 'my-model' }])
   })
 

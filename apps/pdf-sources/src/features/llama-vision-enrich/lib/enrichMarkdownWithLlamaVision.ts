@@ -11,6 +11,7 @@ import { visionImageCropNormForPage } from './visionImageCropNorm'
 
 export interface EnrichVisionOptions {
   baseUrl?: string
+  apiToken?: string
   /** Nome passado ao corpo `model` do OpenAI-compatible API */
   model: string
   /** Raster PDF (72×scale). Por defeito 2.5; depois aplica-se `visionMaxLongEdgePx`. */
@@ -158,6 +159,7 @@ export async function enrichMarkdownWithLlamaVision(
   const chartPages = selectPagesForVisionEnrich(llmMarkdown, {
     bitmapPageNumbers: options.bitmapPageNumbers,
   })
+  const bitmapPages = new Set(options.bitmapPageNumbers ?? [])
   if (chartPages.length === 0) {
     options.onProgress?.({
       phase: 'vision',
@@ -194,7 +196,9 @@ export async function enrichMarkdownWithLlamaVision(
       if (pageNum < 1 || pageNum > numPages) return ''
 
       const page = await pdf.getPage(pageNum)
-      const cropNorm = visionImageCropNormForPage(llmMarkdown, pageNum)
+      const cropNorm = visionImageCropNormForPage(llmMarkdown, pageNum, {
+        hasBitmap: bitmapPages.has(pageNum),
+      })
       const png =
         cropNorm != null
           ? await renderPdfPageRegionToPng(page, scale, cropNorm)
@@ -219,6 +223,7 @@ export async function enrichMarkdownWithLlamaVision(
       try {
         const out = await chatCompletion({
           baseUrl: options.baseUrl,
+          apiToken: options.apiToken,
           model: options.model,
           messages,
           temperature: 0,

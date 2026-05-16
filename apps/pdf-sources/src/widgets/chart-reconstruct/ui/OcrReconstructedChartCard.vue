@@ -54,7 +54,8 @@ function renderChart() {
   if (!el) return
 
   const { chartKind, labels, datasets } = props.config
-  const type = chartKind === 'line' ? 'line' : 'bar'
+  const type = chartKind === 'bar' ? 'bar' : 'line'
+  const isArea = chartKind === 'area'
 
   chart = new Chart(el, {
     type,
@@ -66,11 +67,11 @@ function renderChart() {
           label: ds.label,
           data: ds.data,
           borderColor: c.border,
-          backgroundColor: type === 'bar' ? c.fill : 'transparent',
+          backgroundColor: type === 'bar' || isArea ? c.fill : 'transparent',
           borderWidth: type === 'line' ? 2 : 1,
           tension: 0.25,
-          fill: false,
-          pointRadius: type === 'line' ? 3 : 0,
+          fill: isArea ? 'origin' : false,
+          pointRadius: type === 'line' ? (isArea ? 2 : 3) : 0,
         }
       }),
     },
@@ -127,7 +128,15 @@ onBeforeUnmount(() => {
     <p class="mb-3 text-[11px] leading-snug text-slate-400">
       <span class="font-medium text-slate-300">{{ config.title }}</span>
       · tipo inferido:
-      <span class="text-indigo-300">{{ config.chartKind === 'line' ? 'linhas (eixo temporal / períodos)' : 'barras' }}</span>
+      <span class="text-indigo-300">
+        {{
+          config.chartKind === 'area'
+            ? 'área preenchida (eixo temporal / períodos)'
+            : config.chartKind === 'line'
+              ? 'linhas (eixo temporal / períodos)'
+              : 'barras'
+        }}
+      </span>
     </p>
     <div class="relative h-72 w-full max-w-3xl">
       <canvas ref="canvasRef" />

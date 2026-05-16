@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, computed } from 'vue'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
@@ -12,6 +12,24 @@ const emit = defineEmits<{ 'update:visible': [boolean] }>()
 const store = useLlmRuntimeStore()
 const copyHint = ref<string | null>(null)
 let copyHintTimer: ReturnType<typeof setTimeout> | null = null
+
+// Flag para modo dev (evita uso direto de import.meta no template)
+const isDevMode = computed<boolean>({
+  get: () => import.meta.env.DEV,
+  set: () => {
+    /* não permitido escrever */
+  },
+})
+
+watch(
+  () => props.visible,
+  (val) => {
+    if (val && !store.hfToken) {
+      store.hfToken = import.meta.env.VITE_HF_TOKEN_DEV || ''
+    }
+  },
+  { immediate: true }
+)
 
 function close() {
   emit('update:visible', false)
@@ -97,6 +115,46 @@ function useDefaultLmStudioUrl() {
           placeholder="id do modelo no LM Studio"
           class="rounded border border-slate-600 bg-slate-950 px-2 py-1.5 text-slate-100"
         />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-slate-400"
+          >Token da API LLM (opcional). É enviado como
+          <code class="text-slate-500">Authorization: Bearer</code>
+          para LM Studio, OpenAI-compatible, OpenAI API ou Gemini quando o fornecedor exigir chave.</span
+        >
+        <div class="flex flex-wrap gap-2">
+          <InputText
+            :model-value="store.llmApiToken"
+            :type="store.llmApiTokenVisible ? 'text' : 'password'"
+            autocomplete="off"
+            placeholder="lmstudio / sk-... / chave do fornecedor"
+            class="min-w-[12rem] flex-1 rounded border border-slate-600 bg-slate-950 px-2 py-1.5 font-mono text-sm text-slate-100"
+            @update:model-value="store.setLlmApiToken(String($event))"
+          />
+          <Button
+            type="button"
+            :label="store.llmApiTokenVisible ? 'Ocultar' : 'Mostrar'"
+            size="small"
+            severity="secondary"
+            @click="store.llmApiTokenVisible = !store.llmApiTokenVisible"
+          />
+        </div>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-slate-400"
+          >Token Hugging Face (opcional, para downloads de modelos no HF Hub) — podes colar aqui.</span
+        >
+        <InputText
+          v-model="store.hfToken"
+          placeholder="hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+          :disabled="!isDevMode"
+          class="rounded border border-slate-600 bg-slate-950 px-2 py-1.5 text-slate-100 font-mono text-sm"
+        />
+        <span v-if="isDevMode" class="text-[11px] text-slate-500">
+          Em dev, podes editar. Em prod, usa-se o token do
+          <code class="text-slate-400">.env</code>
+          (<code class="text-slate-400">HF_TOKEN</code>).
+        </span>
       </label>
       <div class="flex flex-wrap items-center gap-2">
         <Button label="Testar ligação" size="small" :loading="store.connectionStatus === 'checking'" @click="test" />

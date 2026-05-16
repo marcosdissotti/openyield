@@ -8,7 +8,7 @@ export interface PdfSource {
   id: string
   notebookId: string
   fileName: string
-  /** Referência ao ficheiro (preview de páginas na UI; não persistido após reinício) */
+  /** Referência ao ficheiro: original no upload, ou restaurado do PDF persistido para miniaturas. */
   file?: File
   /** Caminho absoluto do PDF no disco (Electron, após persistência) */
   pdfPath?: string
@@ -81,6 +81,12 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
     if (!selectedId.value) selectedId.value = id
   }
 
+  function attachFile(id: string, file: File) {
+    const s = sources.value.find((x) => x.id === id)
+    if (!s) return
+    s.file = file
+  }
+
   function fail(id: string, message: string) {
     const s = sources.value.find((x) => x.id === id)
     if (!s) return
@@ -138,6 +144,7 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
     selected,
     sourcesForNotebook,
     addPending,
+    attachFile,
     updateProgress,
     clearProgress,
     complete,

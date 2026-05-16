@@ -16,14 +16,14 @@ import { enrichMarkdownWithLlamaVision } from '#features/llama-vision-enrich/lib
 import { LlamaRuntimeError } from '#features/llama-runtime/lib/llamaRuntimeApi'
 import { useLlmRuntimeStore } from '#entities/llm-runtime'
 import LlmRuntimeBar from '#widgets/llm-runtime-bar/ui/LlmRuntimeBar.vue'
-import { buildDbPageSectionsFromLlmMarkdown } from '#features/pdf-persistence/lib/buildDbPageSectionsFromLlmMarkdown'
-import { isPdfDbAvailable, pdfDbPersistDocument } from '#features/pdf-persistence/lib/pdfDbClient'
+import { isPdfDbAvailable, pdfDbPersistDocument, pdfDbReadDocumentFile } from '#features/pdf-persistence/lib/pdfDbClient'
 
 const store = usePdfSourcesStore()
 const notebook = useNotebookStore()
 const llmRuntime = useLlmRuntimeStore()
 const dropRef = ref<InstanceType<typeof PdfDropArea> | null>(null)
 const panelTab = ref<'raw' | 'llm'>('llm')
+const restoringPreviewFiles = new Set<string>()
 
 const visibleSources = computed(() => {
   const id = notebook.activeNotebookId
@@ -41,6 +41,29 @@ watch(
   (id) => {
     if (id) store.alignSelectionToNotebook(id)
   },
+)
+
+watch(
+  () => ({
+    id: store.selected?.id ?? null,
+    status: store.selected?.status ?? null,
+    hasFile: !!store.selected?.file,
+    pdfPath: store.selected?.pdfPath ?? '',
+  }),
+  async ({ id, status, hasFile, pdfPath }) => {
+    if (!id || status !== 'ready' || hasFile || !pdfPath || restoringPreviewFiles.has(id)) return
+    restoringPreviewFiles.add(id)
+    try {
+      const file = await pdfDbReadDocumentFile(id)
+      const current = store.sources.find((s) => s.id === id)
+      if (file && current && !current.file) store.attachFile(id, file)
+    } catch (e) {
+      console.error('[pdf-sources] Falha a restaurar preview do PDF:', e)
+    } finally {
+      restoringPreviewFiles.delete(id)
+    }
+  },
+  { immediate: true },
 )
 
 function openRenameDialog(notebookId: string) {
@@ -107,6 +130,7 @@ async function onFiles(files: File[]) {
           }
           llmMarkdown = await enrichMarkdownWithLlamaVision(file, llmMarkdown, {
             baseUrl: llmRuntime.effectiveServerBase,
+            apiToken: llmRuntime.llmApiToken,
             model: modelName,
             onProgress: (p) => store.updateProgress(id, p),
             bitmapPageNumbers: result.bitmapPageNumbers,
@@ -134,12 +158,6 @@ async function onFiles(files: File[]) {
       if (isPdfDbAvailable()) {
         try {
           const buf = await file.arrayBuffer()
-          const pageSections = buildDbPageSectionsFromLlmMarkdown(llmMarkdown).map((s) => ({
-            page_num: s.page_num,
-            section_kind: s.section_kind,
-            body_markdown: s.body_markdown,
-            sort_order: s.sort_order,
-          }))
           const persisted = await pdfDbPersistDocument({
             documentId: id,
             notebookId: nbId,
@@ -147,12 +165,12 @@ async function onFiles(files: File[]) {
             pdfBytes: buf,
             rawPlainText: result.rawPlainText,
             llmMarkdown,
-            pageSections,
+            pageSections: [],
           })
           const src = store.sources.find((x) => x.id === id)
           if (src && persisted?.pdfPath) src.pdfPath = persisted.pdfPath
         } catch (e) {
-          console.error('[pdf-sources] Falha a persistir na base local:', e)
+          console.error('[pdf-sources] Falha a persistir no Vectra:', e)
         }
       }
     } catch (e) {

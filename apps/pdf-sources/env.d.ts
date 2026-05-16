@@ -11,15 +11,21 @@ declare module '*.vue' {
 
 export interface PdfSourcesElectronApi {
   getHardwareSummary: () => Promise<HardwareSummaryPayload>
-  pdfDbLoadWorkspace: () => Promise<{
+  vectorInicializar?: () => Promise<void>
+  vectorAdicionar?: (texto: string, metadados?: Record<string, unknown>) => Promise<{ id: string }>
+  vectorBuscar?: (
+    queryTexto: string,
+    limite?: number,
+  ) => Promise<Array<{ id: string; score: number; metadata: Record<string, unknown> }>>
+  pdfDbLoadWorkspace?: () => Promise<{
     notebooks: NotebookRow[]
     activeNotebookId: string | null
     documents: DocumentRow[]
   }>
-  pdfDbUpsertNotebook: (row: { id: string; title: string; ticker: string | null }) => Promise<void>
-  pdfDbDeleteNotebook: (notebookId: string) => Promise<void>
-  pdfDbSetActiveNotebook: (notebookId: string) => Promise<void>
-  pdfDbPersistDocument: (payload: {
+  pdfDbUpsertNotebook?: (row: { id: string; title: string; ticker: string | null }) => Promise<void>
+  pdfDbDeleteNotebook?: (notebookId: string) => Promise<void>
+  pdfDbSetActiveNotebook?: (notebookId: string) => Promise<void>
+  pdfDbPersistDocument?: (payload: {
     documentId: string
     notebookId: string
     fileName: string
@@ -33,7 +39,8 @@ export interface PdfSourcesElectronApi {
       sort_order: number
     }>
   }) => Promise<{ pdfPath: string; fileSha256: string } | void>
-  pdfDbDeleteDocument: (documentId: string) => Promise<void>
+  pdfDbDeleteDocument?: (documentId: string) => Promise<void>
+  pdfDbReadDocumentPdf?: (documentId: string) => Promise<{ fileName: string; bytes: ArrayBuffer } | null>
 }
 
 declare global {

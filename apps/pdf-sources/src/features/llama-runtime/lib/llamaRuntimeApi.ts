@@ -19,6 +19,7 @@ export interface ChatMessage {
 
 export interface ChatCompletionParams {
   baseUrl?: string
+  apiToken?: string
   model: string
   messages: ChatMessage[]
   /** ms */
@@ -48,6 +49,11 @@ function joinUrl(base: string, path: string): string {
   const b = base.replace(/\/$/, '')
   const p = path.startsWith('/') ? path : `/${path}`
   return `${b}${p}`
+}
+
+function authHeaders(apiToken?: string): Record<string, string> {
+  const token = apiToken?.trim()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 /** Vite/proxy ou upstream fechado costumam devolver 500/502 com corpo vazio ou HTML mínimo. */
@@ -87,7 +93,10 @@ export interface OpenAiModelListEntry {
 /**
  * GET /v1/models — LM Studio e outros servidores OpenAI-compatible.
  */
-export async function listOpenAiCompatibleModels(baseUrl?: string): Promise<OpenAiModelListEntry[]> {
+export async function listOpenAiCompatibleModels(
+  baseUrl?: string,
+  apiToken?: string,
+): Promise<OpenAiModelListEntry[]> {
   const base = (baseUrl ?? resolveLlmServerBaseUrl()).replace(/\/$/, '')
   if (!base) {
     throw new LlamaRuntimeError(
@@ -95,7 +104,7 @@ export async function listOpenAiCompatibleModels(baseUrl?: string): Promise<Open
     )
   }
   const url = joinUrl(base, '/v1/models')
-  const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } })
+  const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json', ...authHeaders(apiToken) } })
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
     throw new LlamaRuntimeError(formatLlmHttpError(res.status, errText), res.status)
@@ -135,7 +144,7 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
     }
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders(params.apiToken) },
       body: JSON.stringify(body),
       signal: ac.signal,
     })

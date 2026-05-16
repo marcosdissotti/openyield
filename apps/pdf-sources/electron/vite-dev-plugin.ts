@@ -6,6 +6,15 @@ import * as esbuild from 'esbuild'
 import type { Plugin } from 'vite'
 import { loadPdfSourcesDotEnv } from './appEnv'
 
+const electronExternals = [
+  'electron',
+  'vectra',
+  '@xenova/transformers',
+  '@huggingface/transformers',
+  'onnxruntime-node',
+  'sharp',
+]
+
 /**
  * Empacota `main` (ESM) e `preload` (CJS). O preload tem de ser CJS para o Electron
  * carregar `contextBridge` de forma fiável; ESM em `.js` costuma falhar silenciosamente.
@@ -19,7 +28,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     platform: 'node',
     format: 'esm',
     target: 'node20',
-    external: ['electron', 'better-sqlite3'],
+    external: electronExternals,
     sourcemap: true,
     logLevel: 'warning',
   })
@@ -31,7 +40,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     platform: 'node',
     format: 'cjs',
     target: 'node20',
-    external: ['electron', 'better-sqlite3'],
+    external: electronExternals,
     sourcemap: true,
     logLevel: 'warning',
   })
