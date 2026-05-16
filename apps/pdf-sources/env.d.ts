@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { HardwareSummaryPayload } from './src/shared/model/hardwareSummary'
-import type { DocumentRow, NotebookRow } from './src/shared/model/pdfLibraryDb'
+import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from './src/shared/model/pdfLibraryDb'
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
@@ -27,6 +27,8 @@ export interface PdfSourcesElectronApi {
     notebooks: NotebookRow[]
     activeNotebookId: string | null
     documents: DocumentRow[]
+    reports: StudioReportRow[]
+    fundamentals: FundamentalSnapshotRow[]
   }>
   pdfDbUpsertNotebook?: (row: { id: string; title: string; ticker: string | null }) => Promise<void>
   pdfDbDeleteNotebook?: (notebookId: string) => Promise<void>
@@ -47,6 +49,44 @@ export interface PdfSourcesElectronApi {
   }) => Promise<{ pdfPath: string; fileSha256: string } | void>
   pdfDbDeleteDocument?: (documentId: string) => Promise<void>
   pdfDbReadDocumentPdf?: (documentId: string) => Promise<{ fileName: string; bytes: ArrayBuffer } | null>
+  pdfDbPersistStudioReport?: (payload: {
+    id: string
+    notebookId: string
+    type: 'risk'
+    title: string
+    subtitle: string
+    status: 'generating' | 'ready' | 'error'
+    body: string
+    createdAt: string
+    progressPercent: number
+    etaLabel: string
+  }) => Promise<void>
+  pdfDbDeleteStudioReport?: (reportId: string) => Promise<void>
+  pdfDbPersistFundamentalSnapshot?: (payload: {
+    id: string
+    notebookId: string
+    ticker: string | null
+    title: string
+    status: 'generating' | 'ready' | 'error'
+    fields: Array<{
+      key: string
+      label: string
+      section: string
+      value: string
+      source?: string
+      source_file?: string
+      source_page?: string
+      source_line?: string
+      calculation?: string
+      manual?: boolean
+      calculated?: boolean
+    }>
+    error: string | null
+    progressPercent: number
+    etaLabel: string
+    createdAt: string
+  }) => Promise<void>
+  pdfDbDeleteFundamentalSnapshot?: (snapshotId: string) => Promise<void>
 }
 
 declare global {

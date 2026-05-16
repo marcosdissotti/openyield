@@ -6,7 +6,7 @@ import { LocalIndex } from 'vectra'
 import type { IndexItem } from 'vectra'
 import type { MetadataTypes } from 'vectra'
 import { env, pipeline, type FeatureExtractionPipeline } from '@xenova/transformers'
-import type { DocumentRow, NotebookRow } from '../src/shared/model/pdfLibraryDb'
+import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '../src/shared/model/pdfLibraryDb'
 
 const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2'
 const MAX_CHUNK_CHARS = 1800
@@ -26,6 +26,8 @@ type StoredIndexItem = IndexItem<StoredMetadata> & { metadataFile?: string }
 interface WorkspaceMeta {
   notebooks: NotebookRow[]
   activeNotebookId: string | null
+  reports?: StudioReportRow[]
+  fundamentals?: FundamentalSnapshotRow[]
 }
 
 interface PageSectionInput {
@@ -93,6 +95,8 @@ function defaultWorkspaceMeta(): WorkspaceMeta {
   return {
     notebooks: [{ id, title: 'Caderno 1', ticker: null, created_at: now, updated_at: now }],
     activeNotebookId: id,
+    reports: [],
+    fundamentals: [],
   }
 }
 
@@ -104,6 +108,8 @@ function readWorkspaceMeta(): WorkspaceMeta {
       return {
         notebooks: parsed.notebooks as NotebookRow[],
         activeNotebookId: parsed.activeNotebookId ?? parsed.notebooks[0]?.id ?? null,
+        reports: Array.isArray(parsed.reports) ? (parsed.reports as StudioReportRow[]) : [],
+        fundamentals: Array.isArray(parsed.fundamentals) ? (parsed.fundamentals as FundamentalSnapshotRow[]) : [],
       }
     }
   } catch {
@@ -137,6 +143,31 @@ function metadataToDocumentRow(id: string, metadata: VectorMetadata): DocumentRo
     updated_at: typeof metadata.updatedAt === 'string' ? metadata.updatedAt : new Date().toISOString(),
     raw_plain_text: typeof metadata.rawPlainText === 'string' ? metadata.rawPlainText : '',
     llm_markdown: typeof metadata.llmMarkdown === 'string' ? metadata.llmMarkdown : '',
+  }
+}
+
+function metadataToStudioReportRow(id: string, metadata: VectorMetadata): StudioReportRow | null {
+  if (metadata.kind !== 'studioReport') return null
+  const notebookId = typeof metadata.notebookId === 'string' ? metadata.notebookId : ''
+  const title = typeof metadata.title === 'string' ? metadata.title : ''
+  const body = typeof metadata.body === 'string' ? metadata.body : ''
+  if (!notebookId || !title) return null
+  const status =
+    metadata.status === 'generating' || metadata.status === 'ready' || metadata.status === 'error'
+      ? metadata.status
+      : 'ready'
+  return {
+    id,
+    notebook_id: notebookId,
+    type: metadata.reportType === 'risk' ? 'risk' : 'risk',
+    title,
+    subtitle: typeof metadata.subtitle === 'string' ? metadata.subtitle : '',
+    status,
+    body,
+    created_at: typeof metadata.createdAt === 'string' ? metadata.createdAt : new Date().toISOString(),
+    updated_at: typeof metadata.updatedAt === 'string' ? metadata.updatedAt : new Date().toISOString(),
+    progress_percent: typeof metadata.progressPercent === 'number' ? metadata.progressPercent : 100,
+    eta_label: typeof metadata.etaLabel === 'string' ? metadata.etaLabel : '',
   }
 }
 
@@ -324,6 +355,8 @@ export class VectorService {
     notebooks: NotebookRow[]
     activeNotebookId: string | null
     documents: DocumentRow[]
+    reports: StudioReportRow[]
+    fundamentals: FundamentalSnapshotRow[]
   }> {
     await this.ensureIndexCreated()
     const meta = readWorkspaceMeta()
@@ -337,6 +370,15 @@ export class VectorService {
       )
       .filter((row): row is DocumentRow => row != null)
       .sort((a, b) => a.notebook_id.localeCompare(b.notebook_id) || a.created_at.localeCompare(b.created_at))
+    const vectorReports = items
+      .map((item) => metadataToStudioReportRow(item.id, this.itemMetadata(item)))
+      .filter((row): row is StudioReportRow => row != null)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const reportsById = new Map<string, StudioReportRow>()
+    for (const report of vectorReports) reportsById.set(report.id, report)
+    for (const report of meta.reports ?? []) reportsById.set(report.id, report)
+    const reports = [...reportsById.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const fundamentals = [...(meta.fundamentals ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))
 
     const notebooksById = new Map(meta.notebooks.map((n) => [n.id, n]))
     for (const doc of documents) {
@@ -351,6 +393,30 @@ export class VectorService {
         })
       }
     }
+    for (const report of reports) {
+      if (!notebooksById.has(report.notebook_id)) {
+        const now = new Date().toISOString()
+        notebooksById.set(report.notebook_id, {
+          id: report.notebook_id,
+          title: 'Caderno',
+          ticker: null,
+          created_at: now,
+          updated_at: now,
+        })
+      }
+    }
+    for (const snapshot of fundamentals) {
+      if (!notebooksById.has(snapshot.notebook_id)) {
+        const now = new Date().toISOString()
+        notebooksById.set(snapshot.notebook_id, {
+          id: snapshot.notebook_id,
+          title: 'Caderno',
+          ticker: null,
+          created_at: now,
+          updated_at: now,
+        })
+      }
+    }
 
     let notebooks = [...notebooksById.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
     if (!notebooks.length) notebooks = defaultWorkspaceMeta().notebooks
@@ -358,8 +424,8 @@ export class VectorService {
       meta.activeNotebookId && notebooks.some((n) => n.id === meta.activeNotebookId)
         ? meta.activeNotebookId
         : notebooks[0]?.id ?? null
-    writeWorkspaceMeta({ notebooks, activeNotebookId })
-    return { notebooks, activeNotebookId, documents }
+    writeWorkspaceMeta({ notebooks, activeNotebookId, reports, fundamentals })
+    return { notebooks, activeNotebookId, documents, reports, fundamentals }
   }
 
   upsertNotebook(row: { id: string; title: string; ticker: string | null }): void {
@@ -388,12 +454,19 @@ export class VectorService {
     const items = (await this.index.listItems()) as StoredIndexItem[]
     for (const item of items) {
       const metadata = this.itemMetadata(item)
-      if ((metadata.kind === 'document' || metadata.kind === 'documentChunk') && metadata.notebookId === notebookId) {
+      if (
+        (metadata.kind === 'document' ||
+          metadata.kind === 'documentChunk' ||
+          metadata.kind === 'studioReport') &&
+        metadata.notebookId === notebookId
+      ) {
         await this.index.deleteItem(item.id)
       }
     }
     const meta = readWorkspaceMeta()
     meta.notebooks = meta.notebooks.filter((n) => n.id !== notebookId)
+    meta.reports = (meta.reports ?? []).filter((report) => report.notebook_id !== notebookId)
+    meta.fundamentals = (meta.fundamentals ?? []).filter((snapshot) => snapshot.notebook_id !== notebookId)
     if (!meta.notebooks.length) {
       writeWorkspaceMeta(defaultWorkspaceMeta())
       return
@@ -456,6 +529,106 @@ export class VectorService {
     await this.ensureIndexCreated()
     await this.deleteDocumentChunks(documentId)
     await this.index.deleteItem(documentId)
+  }
+
+  async persistStudioReport(input: {
+    id: string
+    notebookId: string
+    type: 'risk'
+    title: string
+    subtitle: string
+    status: 'generating' | 'ready' | 'error'
+    body: string
+    createdAt: string
+    progressPercent: number
+    etaLabel: string
+  }): Promise<void> {
+    const now = new Date().toISOString()
+    const meta = readWorkspaceMeta()
+    const row: StudioReportRow = {
+      id: input.id,
+      notebook_id: input.notebookId,
+      type: input.type,
+      title: input.title,
+      subtitle: input.subtitle,
+      status: input.status,
+      body: input.body,
+      created_at: input.createdAt || now,
+      updated_at: now,
+      progress_percent: input.progressPercent,
+      eta_label: input.etaLabel,
+    }
+    const reports = meta.reports ?? []
+    const idx = reports.findIndex((report) => report.id === input.id)
+    if (idx >= 0) reports[idx] = row
+    else reports.unshift(row)
+    meta.reports = reports.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    writeWorkspaceMeta(meta)
+  }
+
+  async deleteStudioReport(reportId: string): Promise<void> {
+    const meta = readWorkspaceMeta()
+    meta.reports = (meta.reports ?? []).filter((report) => report.id !== reportId)
+    writeWorkspaceMeta(meta)
+    try {
+      await this.ensureIndexCreated()
+      await this.index.deleteItem(reportId)
+    } catch {
+      /* older versions may have stored reports in Vectra; ignore if already absent */
+    }
+  }
+
+  async persistFundamentalSnapshot(input: {
+    id: string
+    notebookId: string
+    ticker: string | null
+    title: string
+    status: 'generating' | 'ready' | 'error'
+    fields: Array<{
+      key: string
+      label: string
+      section: string
+      value: string
+      source?: string
+      source_file?: string
+      source_page?: string
+      source_line?: string
+      calculation?: string
+      manual?: boolean
+      calculated?: boolean
+    }>
+    error: string | null
+    progressPercent: number
+    etaLabel: string
+    createdAt: string
+  }): Promise<void> {
+    const now = new Date().toISOString()
+    const meta = readWorkspaceMeta()
+    const row: FundamentalSnapshotRow = {
+      id: input.id,
+      notebook_id: input.notebookId,
+      ticker: input.ticker,
+      title: input.title,
+      status: input.status,
+      fields: input.fields,
+      error: input.error,
+      progress_percent: input.progressPercent,
+      eta_label: input.etaLabel,
+      created_at: input.createdAt || now,
+      updated_at: now,
+    }
+    const snapshots = meta.fundamentals ?? []
+    const idx = snapshots.findIndex((snapshot) => snapshot.id === input.id)
+    if (idx >= 0) snapshots[idx] = row
+    else snapshots.unshift(row)
+    meta.fundamentals = snapshots.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    writeWorkspaceMeta(meta)
+  }
+
+  async deleteFundamentalSnapshot(snapshotId: string): Promise<void> {
+    const meta = readWorkspaceMeta()
+    meta.fundamentals = (meta.fundamentals ?? []).filter((snapshot) => snapshot.id !== snapshotId)
+    writeWorkspaceMeta(meta)
   }
 
   private async deleteDocumentChunks(documentId: string): Promise<void> {

@@ -19,3 +19,45 @@ export interface DocumentRow {
   raw_plain_text: string
   llm_markdown: string
 }
+
+export interface StudioReportRow {
+  id: string
+  notebook_id: string
+  type: 'risk'
+  title: string
+  subtitle: string
+  status: 'generating' | 'ready' | 'error'
+  body: string
+  created_at: string
+  updated_at: string
+  progress_percent: number
+  eta_label: string
+}
+
+export interface FundamentalFieldRow {
+  key: string
+  label: string
+  section: string
+  value: string
+  source?: string
+  source_file?: string
+  source_page?: string
+  source_line?: string
+  calculation?: string
+  manual?: boolean
+  calculated?: boolean
+}
+
+export interface FundamentalSnapshotRow {
+  id: string
+  notebook_id: string
+  ticker: string | null
+  title: string
+  status: 'generating' | 'ready' | 'error'
+  fields: FundamentalFieldRow[]
+  error: string | null
+  progress_percent: number
+  eta_label: string
+  created_at: string
+  updated_at: string
+}

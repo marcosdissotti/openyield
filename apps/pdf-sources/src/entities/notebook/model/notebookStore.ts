@@ -9,6 +9,8 @@ import {
 } from '#features/pdf-persistence/lib/pdfDbClient'
 import { refreshPdfWorkspaceFromDb } from '#features/pdf-persistence/bootstrapWorkspace'
 import { usePdfSourcesStore } from '#entities/pdf-source'
+import { useStudioReportStore } from '#entities/studio-report'
+import { useFundamentalSnapshotStore } from '#entities/fundamental-snapshot'
 
 export interface NotebookVm {
   id: string
@@ -73,7 +75,11 @@ export const useNotebookStore = defineStore('notebook', () => {
 
   async function deleteNotebookById(id: string) {
     const pdf = usePdfSourcesStore()
+    const reports = useStudioReportStore()
+    const fundamentals = useFundamentalSnapshotStore()
     pdf.removeAllForNotebook(id)
+    reports.removeAllForNotebook(id)
+    fundamentals.removeAllForNotebook(id)
     if (isPdfDbAvailable()) {
       await pdfDbDeleteNotebook(id)
       await refreshPdfWorkspaceFromDb()

@@ -84,4 +84,37 @@ export function registerVectorIpc(): void {
   ipcMain.handle('pdf-db-read-document-pdf', async (_event, documentId: string) => {
     return service.readDocumentPdf(String(documentId ?? ''))
   })
+
+  ipcMain.handle(
+    'pdf-db-persist-studio-report',
+    async (
+      _event,
+      payload: {
+        id: string
+        notebookId: string
+        type: 'risk'
+        title: string
+        subtitle: string
+        status: 'generating' | 'ready' | 'error'
+        body: string
+        createdAt: string
+        progressPercent: number
+        etaLabel: string
+      },
+    ) => {
+      await service.persistStudioReport(payload)
+    },
+  )
+
+  ipcMain.handle('pdf-db-delete-studio-report', async (_event, reportId: string) => {
+    await service.deleteStudioReport(String(reportId ?? ''))
+  })
+
+  ipcMain.handle('pdf-db-persist-fundamental-snapshot', async (_event, payload) => {
+    await service.persistFundamentalSnapshot(payload)
+  })
+
+  ipcMain.handle('pdf-db-delete-fundamental-snapshot', async (_event, snapshotId: string) => {
+    await service.deleteFundamentalSnapshot(String(snapshotId ?? ''))
+  })
 }

@@ -1,4 +1,5 @@
 import { resolveLlmServerBaseUrl } from './resolveLlmServerBaseUrl'
+import { logger } from '#shared/lib/logger'
 
 export interface ChatMessagePartText {
   type: 'text'
@@ -28,6 +29,8 @@ export interface ChatCompletionParams {
   temperature?: number
   /** Só usar com APIs que aceitem OpenAI `response_format.type: json_object` (ex.: OpenAI). LM Studio rejeita (400: só json_schema ou text). */
   responseFormatJson?: boolean
+  /** Recebe deltas enquanto o servidor OpenAI-compatible transmite SSE (`stream: true`). */
+  onTextDelta?: (delta: string, text: string) => void
 }
 
 export interface ChatCompletionResult {
@@ -98,30 +101,38 @@ export async function listOpenAiCompatibleModels(
   apiToken?: string,
 ): Promise<OpenAiModelListEntry[]> {
   const base = (baseUrl ?? resolveLlmServerBaseUrl()).replace(/\/$/, '')
+  logger.info('Listing OpenAI-compatible models', { baseUrl: base })
   if (!base) {
+    logger.error('LLM runtime not configured')
     throw new LlamaRuntimeError(
       'Runtime LLM não configurado: defina URL em Ajustes ou `VITE_LLM_API_BASE` no build.',
     )
   }
   const url = joinUrl(base, '/v1/models')
+  logger.debug('Fetching models from API', { url })
   const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json', ...authHeaders(apiToken) } })
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
+    logger.error('Failed to fetch models', { status: res.status, error: errText })
     throw new LlamaRuntimeError(formatLlmHttpError(res.status, errText), res.status)
   }
   const raw = (await res.json()) as { data?: { id?: string }[] }
   const rows = raw.data ?? []
-  return rows
+  const models = rows
     .map((r) => (typeof r.id === 'string' && r.id.trim() ? { id: r.id.trim() } : null))
     .filter((x): x is OpenAiModelListEntry => x != null)
+  logger.info('Models fetched successfully', { count: models.length, models: models.map(m => m.id) })
+  return models
 }
 
 /**
- * POST /v1/chat/completions (sem stream).
+ * POST /v1/chat/completions.
  */
 export async function chatCompletion(params: ChatCompletionParams): Promise<ChatCompletionResult> {
   const baseUrl = (params.baseUrl ?? resolveLlmServerBaseUrl()).replace(/\/$/, '')
+  logger.info('Chat completion request initiated', { baseUrl, model: params.model, messageCount: params.messages.length })
   if (!baseUrl) {
+    logger.error('LLM runtime not configured for chat completion')
     throw new LlamaRuntimeError(
       'Runtime LLM não configurado: defina URL em Ajustes ou use o proxy `/lm-studio` em dev (LM Studio).',
     )
@@ -129,12 +140,17 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
   const url = joinUrl(baseUrl, '/v1/chat/completions')
   const timeoutMs = params.timeoutMs ?? 120_000
   const ac = new AbortController()
-  const t = setTimeout(() => ac.abort(), timeoutMs)
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+  const refreshTimeout = () => {
+    if (timeoutHandle) clearTimeout(timeoutHandle)
+    timeoutHandle = setTimeout(() => ac.abort(), timeoutMs)
+  }
+  refreshTimeout()
   try {
     const body: Record<string, unknown> = {
       model: params.model || 'gpt-3.5-turbo',
       messages: params.messages,
-      stream: false,
+      stream: !!params.onTextDelta,
     }
     if (typeof params.temperature === 'number' && Number.isFinite(params.temperature)) {
       body.temperature = params.temperature
@@ -142,28 +158,47 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
     if (params.responseFormatJson) {
       body.response_format = { type: 'json_object' }
     }
+    const bodyStr = JSON.stringify(body)
+    logger.debug('Sending chat completion request', { url, bodySize: bodyStr.length, timeoutMs })
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders(params.apiToken) },
-      body: JSON.stringify(body),
+      body: bodyStr,
       signal: ac.signal,
     })
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
+      logger.error('Chat completion request failed', { status: res.status, error: errText })
       throw new LlamaRuntimeError(formatLlmHttpError(res.status, errText), res.status)
     }
-    const raw = (await res.json()) as {
-      choices?: { message?: { content?: string } }[]
+    if (params.onTextDelta) {
+      const out = await readChatCompletionStream(
+        res,
+        (delta, text) => {
+          refreshTimeout()
+          params.onTextDelta?.(delta, text)
+        },
+        refreshTimeout,
+      )
+      logger.info('Chat completion stream successful', { responseLength: out.text.length, model: params.model })
+      return out
+    } else {
+      const raw = (await res.json()) as {
+        choices?: { message?: { content?: string } }[]
+      }
+      const text = raw.choices?.[0]?.message?.content ?? ''
+      logger.info('Chat completion successful', { responseLength: text.length, model: params.model })
+      return { text, raw }
     }
-    const text = raw.choices?.[0]?.message?.content ?? ''
-    return { text, raw }
   } catch (e) {
     if (e instanceof LlamaRuntimeError) throw e
     if (e instanceof DOMException && e.name === 'AbortError') {
+      logger.error('Chat completion timeout', { timeoutMs, baseUrl })
       throw new LlamaRuntimeError(`Pedido ao servidor LLM excedeu ${timeoutMs}ms (timeout).`)
     }
     const msg = e instanceof Error ? e.message : String(e)
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      logger.error('Chat completion network error', { baseUrl, error: msg })
       throw new LlamaRuntimeError(
         `Não foi possível ligar ao servidor LLM em ${baseUrl}. ` +
           'Se usa LM Studio em `http://127.0.0.1:1234` no browser em desenvolvimento, a app já encaminha pelo proxy `/lm-studio`; ' +
@@ -171,8 +206,68 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
           'Para outro PC na rede, use o URL completo e permita CORS no LM Studio ou use a app em Electron.',
       )
     }
+    logger.error('Chat completion unexpected error', { error: msg })
     throw new LlamaRuntimeError(msg)
   } finally {
-    clearTimeout(t)
+    if (timeoutHandle) clearTimeout(timeoutHandle)
   }
+}
+
+function extractTextDelta(raw: unknown): string {
+  const obj = raw as {
+    choices?: {
+      delta?: { content?: string }
+      message?: { content?: string }
+      text?: string
+    }[]
+  }
+  const choice = obj.choices?.[0]
+  return choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? ''
+}
+
+async function readChatCompletionStream(
+  res: Response,
+  onTextDelta: (delta: string, text: string) => void,
+  onActivity?: () => void,
+): Promise<ChatCompletionResult> {
+  if (!res.body) throw new LlamaRuntimeError('Servidor LLM não retornou corpo de streaming.')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const events: unknown[] = []
+  let buffer = ''
+  let text = ''
+
+  const processFrame = (frame: string) => {
+    const dataLines = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+    for (const data of dataLines) {
+      if (!data || data === '[DONE]') continue
+      try {
+        const raw = JSON.parse(data) as unknown
+        events.push(raw)
+        const delta = extractTextDelta(raw)
+        if (!delta) continue
+        text += delta
+        onTextDelta(delta, text)
+      } catch {
+        logger.warn('Ignoring malformed LLM stream frame', { data: data.slice(0, 240) })
+      }
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    onActivity?.()
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split(/\r?\n\r?\n/)
+    buffer = frames.pop() ?? ''
+    for (const frame of frames) processFrame(frame)
+  }
+
+  buffer += decoder.decode()
+  if (buffer.trim()) processFrame(buffer)
+  return { text, raw: { stream: true, events } }
 }

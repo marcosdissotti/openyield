@@ -49,6 +49,41 @@ describe('llamaRuntimeApi', () => {
     expect(fetchMock).toHaveBeenCalled()
   })
 
+  it('chatCompletion lê streaming OpenAI-compatible', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"olá"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" mundo"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { stream?: boolean }
+        expect(body.stream).toBe(true)
+        return {
+          ok: true,
+          body: new ReadableStream({
+            start(controller) {
+              for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk))
+              controller.close()
+            },
+          }),
+        }
+      }) as unknown as typeof fetch,
+    )
+
+    const partials: string[] = []
+    const out = await chatCompletion({
+      baseUrl: 'http://x',
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+      onTextDelta: (_delta, text) => partials.push(text),
+    })
+
+    expect(out.text).toBe('olá mundo')
+    expect(partials).toEqual(['olá', 'olá mundo'])
+  })
+
   it('envia Authorization Bearer quando apiToken é passado', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>
