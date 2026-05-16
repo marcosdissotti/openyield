@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { selectPagesForVisionEnrich } from '#features/llama-vision-enrich/lib/selectPagesForVisionEnrich'
 
 describe('selectPagesForVisionEnrich', () => {
-  it('returns page numbers only for chart mode (skips pages sem gráfico no mapa)', () => {
+  it('inclui gráfico inferido (OCR) e páginas só com bitmap quando listadas', () => {
     const mdChart = `# x
 
 ## Página 1 — texto extraído
@@ -24,6 +24,7 @@ Sul	95
 Só texto — sem OCR nem layout que dispare gráfico no preview.
 `
     expect(selectPagesForVisionEnrich(mdTextOnly)).toEqual([])
+    expect(selectPagesForVisionEnrich(mdTextOnly, { bitmapPageNumbers: [1] })).toEqual([1])
 
     const rows = ['Métrica\tA\tB']
     for (let i = 0; i < 11; i++) {
@@ -40,5 +41,6 @@ ${rows.join('\n')}
 \`\`\`
 `
     expect(selectPagesForVisionEnrich(mdWideLayoutTable)).not.toContain(4)
+    expect(selectPagesForVisionEnrich(mdWideLayoutTable, { bitmapPageNumbers: [4] })).not.toContain(4)
   })
 })

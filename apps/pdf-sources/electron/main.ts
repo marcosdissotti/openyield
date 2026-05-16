@@ -1,9 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadPdfSourcesDotEnv } from './appEnv'
+import { getActiveNotebookId, getPdfDb } from './pdfDb'
 import { readHardwareSummary } from './hardware'
+import { registerPdfDbIpc } from './pdfDbIpc'
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
 
@@ -11,28 +13,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const mainDir = __dirname
 loadPdfSourcesDotEnv(path.join(mainDir, '..'), process.cwd())
 
-/** WSL2: Chromium costuma falhar no processo GPU (`viz_main_impl`). */
-function isWslKernel(): boolean {
-  try {
-    const v = readFileSync('/proc/version', 'utf8').toLowerCase()
-    return v.includes('microsoft') || v.includes('wsl')
-  } catch {
-    return false
-  }
+/** dbPath está aqui apenas para compatibilidade caso seja chamado em outro lugar */
+function dbPath(): string {
+  return path.join(app.getPath('userData'), 'pdf-sources-data', 'library.sqlite')
 }
-
-function configureGpuForHeadlessOrWsl(): void {
-  if (process.env.PDF_SOURCES_DISABLE_GPU === '0') return
-  if (
-    process.env.PDF_SOURCES_DISABLE_GPU === '1' ||
-    process.env.ELECTRON_DISABLE_GPU === '1' ||
-    isWslKernel()
-  ) {
-    app.disableHardwareAcceleration()
-  }
-}
-
-configureGpuForHeadlessOrWsl()
 
 function resolvePreloadPath(): string {
   const nextToMain = path.join(__dirname, 'preload.cjs')
@@ -75,9 +59,13 @@ function createWindow() {
     const indexHtml = path.join(mainDir, '..', 'dist', 'index.html')
     void win.loadFile(indexHtml)
   }
+
+  // Log de inicialização do banco
+  console.info('[pdf-sources] App iniciado. Banco de dados em:', dbPath())
 }
 
 ipcMain.handle('get-hardware-summary', async () => readHardwareSummary())
+registerPdfDbIpc()
 
 app.whenReady().then(() => {
   createWindow()

@@ -14,6 +14,7 @@ vi.mock('#features/extract-pdf-rich', async (importOriginal) => {
     buildLlmDocumentFromPdf: vi.fn(async () => ({
       rawPlainText: 'Hello Cypress Fixture',
       llmMarkdown: '# Fixture\n\n## Página 1 — texto extraído\n\nHello Cypress Fixture\n',
+      bitmapPageNumbers: [1],
     })),
   }
 })

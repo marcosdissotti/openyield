@@ -23,6 +23,8 @@ export interface ChatCompletionParams {
   messages: ChatMessage[]
   /** ms */
   timeoutMs?: number
+  /** OpenAI-compatible; use 0 para visão determinística (LM Studio aceita). */
+  temperature?: number
   /** Só usar com APIs que aceitem OpenAI `response_format.type: json_object` (ex.: OpenAI). LM Studio rejeita (400: só json_schema ou text). */
   responseFormatJson?: boolean
 }
@@ -124,6 +126,9 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
       model: params.model || 'gpt-3.5-turbo',
       messages: params.messages,
       stream: false,
+    }
+    if (typeof params.temperature === 'number' && Number.isFinite(params.temperature)) {
+      body.temperature = params.temperature
     }
     if (params.responseFormatJson) {
       body.response_format = { type: 'json_object' }

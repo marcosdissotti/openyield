@@ -39,6 +39,7 @@ describe('buildLlmDocumentFromPdf', () => {
     expect(result.llmMarkdown).toContain('MOCK_OCR_LINE')
     expect(progress.length).toBeGreaterThan(0)
     expect(Math.max(...progress)).toBe(100)
+    expect(Array.isArray(result.bitmapPageNumbers)).toBe(true)
   })
 
   it('processes real fixture: vector PDFs get full-page OCR (mocked in test)', async () => {
@@ -52,6 +53,7 @@ describe('buildLlmDocumentFromPdf', () => {
     expect(result.llmMarkdown).toContain('Hello Cypress Fixture')
     expect(result.llmMarkdown).toContain('## Página 1 — OCR')
     expect(result.llmMarkdown).toContain('MOCK_OCR_FULL_PAGE')
+    expect(Array.isArray(result.bitmapPageNumbers)).toBe(true)
   })
 
   it('runs OCR when PDF embeds a bitmap (no force)', async () => {
@@ -72,5 +74,6 @@ describe('buildLlmDocumentFromPdf', () => {
 
     expect(result.llmMarkdown).toContain('## Página 1 — OCR')
     expect(result.llmMarkdown).toContain('OCR_FROM_BITMAP_PAGE')
+    expect(result.bitmapPageNumbers).toContain(1)
   })
 })

@@ -2,13 +2,14 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import type { OcrChartReconstruction, PagePreviewVisual } from '#widgets/chart-reconstruct'
-import {
-  buildPagePreviewVisualMap,
-  OcrReconstructedChartCard,
-  ReconstructedTableBlock,
-} from '#widgets/chart-reconstruct'
 import { createPdfPagePngObjectUrl, createPdfPageThumbnailUrls } from '../lib/createPdfPageThumbnailUrls'
+import { groupMarkdownPagesForPreview } from '../lib/groupMarkdownPagesForPreview'
+import { buildPagePreviewVisualMap } from '#widgets/chart-reconstruct/lib/buildPagePreviewVisualMap'
+import { extractVisionChartJsonByPage } from '../lib/extractVisionChartJsonByPage'
+import { stripVisionEnrichmentAppendix } from '../lib/stripVisionEnrichmentAppendix'
+import { visionRecordToPageVisual, type VisionPageVisual } from '../lib/visionJsonToPageVisual'
+import PageDocumentVisualBlock from './PageDocumentVisualBlock.vue'
+import VisionEnrichedVisualBlock from './VisionEnrichedVisualBlock.vue'
 
 const props = defineProps<{
   markdown: string
@@ -29,81 +30,55 @@ function toSanitizedHtml(md: string): string {
   return DOMPurify.sanitize(html, DOMPURIFY_OPTS)
 }
 
-type Segment =
-  | { kind: 'preamble'; html: string }
-  | { kind: 'page'; pageNum: number; sectionLabel: string; html: string }
+function mdToHtml(md: string): string {
+  return toSanitizedHtml(md)
+}
+
+const docView = computed(() => groupMarkdownPagesForPreview(stripVisionEnrichmentAppendix(props.markdown || '')))
+
+const visionVisualByPage = computed(() => {
+  const m = extractVisionChartJsonByPage(props.markdown || '')
+  const out = new Map<number, VisionPageVisual>()
+  for (const [p, rec] of m) {
+    const v = visionRecordToPageVisual(p, rec)
+    if (v) out.set(p, v)
+  }
+  return out
+})
+
+const pagePreviewByPage = computed(() => buildPagePreviewVisualMap(props.markdown || ''))
+
+function visionVisualForPage(pageNum: number): VisionPageVisual | null {
+  return visionVisualByPage.value.get(pageNum) ?? null
+}
+
+function pageHasOcrDerivedVisuals(pageNum: number): boolean {
+  return pagePreviewByPage.value.has(pageNum)
+}
 
 const thumbs = ref<string[]>([])
 const thumbsLoading = ref(false)
 const thumbsError = ref(false)
 let objectUrls: string[] = []
 
-const segments = computed((): Segment[] => {
-  const src = (props.markdown || '').replace(/\r\n/g, '\n')
-  if (!/^## Página \d+/m.test(src)) {
-    return [{ kind: 'preamble', html: toSanitizedHtml(src) }]
-  }
-  const chunks = src.split(/(?=^## Página \d+)/m)
-  const out: Segment[] = []
-  const head = chunks[0] ?? ''
-  if (head.trim()) {
-    out.push({ kind: 'preamble', html: toSanitizedHtml(head) })
-  }
-  for (let i = 1; i < chunks.length; i++) {
-    const c = chunks[i] ?? ''
-    const m = c.match(/^## Página (\d+)/)
-    const pageNum = m ? parseInt(m[1], 10) : 1
-    const head = c.match(/^##\s+Página\s+\d+\s+—\s*(.+)$/m)
-    const sectionLabel = (head?.[1] ?? '').trim()
-    out.push({ kind: 'page', pageNum, sectionLabel, html: toSanitizedHtml(c) })
-  }
-  return out
-})
-
-const previewVisualByPage = computed(() => buildPagePreviewVisualMap(props.markdown || ''))
-
-function chartVisualForPage(pageNum: number): OcrChartReconstruction | null {
-  const v = previewVisualByPage.value.get(pageNum)
-  return v?.mode === 'chart' ? v.chart : null
-}
-
-function tableVisualForPage(pageNum: number): Extract<PagePreviewVisual, { mode: 'table' }> | null {
-  const v = previewVisualByPage.value.get(pageNum)
-  return v?.mode === 'table' ? v : null
-}
-
-function isTextoExtraidoSection(seg: Segment): boolean {
-  return seg.kind === 'page' && seg.sectionLabel.trim().toLowerCase() === 'texto extraído'
-}
-
 function thumbForPage(pageNum: number): string | undefined {
   return thumbs.value[pageNum - 1]
 }
 
-/** Primeiro bloco `## Página` do documento (para não duplicar margem com o título) */
-function isFirstPageSegment(index: number): boolean {
-  for (let i = 0; i < index; i++) {
-    if (segments.value[i]?.kind === 'page') return false
-  }
-  return segments.value[index]?.kind === 'page'
-}
-
-/** Primeira secção deste número de página (texto vs layout vs OCR): mostra miniatura só aqui */
-function isFirstSegmentForPageNumber(segIdx: number, pageNum: number): boolean {
-  for (let i = 0; i < segIdx; i++) {
-    const s = segments.value[i]
-    if (s?.kind === 'page' && s.pageNum === pageNum) return false
-  }
-  return true
-}
-
-function showThumbColumn(segIdx: number, pageNum: number): boolean {
-  if (!props.file || !isFirstSegmentForPageNumber(segIdx, pageNum)) return false
+function showThumbColumn(pageNum: number): boolean {
+  if (!props.file) return false
   return !!(
     thumbForPage(pageNum) ||
     thumbsLoading.value ||
     (!thumbsLoading.value && !thumbForPage(pageNum))
   )
+}
+
+function pageBlockSectionClass(pageIndex: number): string {
+  const v = docView.value
+  const hasPreamble = v.mode === 'structured' && !!(v.preambleMarkdown && v.preambleMarkdown.trim())
+  if (pageIndex === 0 && !hasPreamble) return 'mt-4 sm:mt-5'
+  return 'mt-6 border-t border-slate-800/80 pt-6 sm:mt-8 sm:pt-8'
 }
 
 const modalOpen = ref(false)
@@ -219,45 +194,47 @@ onUnmounted(() => {
     class="llm-md-preview flex min-h-0 flex-1 flex-col gap-4 text-slate-200"
   >
     <article
-      class="min-h-0 flex-1 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-4 shadow-inner sm:px-5 sm:py-6"
+      class="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-4 shadow-inner sm:px-5 sm:py-6"
     >
-      <template v-for="(seg, idx) in segments" :key="idx">
-        <div v-if="seg.kind === 'preamble'" class="markdown-body" v-html="seg.html" />
-
+      <template v-if="docView.mode === 'single'">
+        <div class="markdown-body" v-html="mdToHtml(docView.markdown)" />
+      </template>
+      <template v-else>
+        <div
+          v-if="docView.preambleMarkdown && docView.preambleMarkdown.trim()"
+          class="markdown-body mb-6"
+          v-html="mdToHtml(docView.preambleMarkdown)"
+        />
         <section
-          v-else
-          :class="[
-            'page-block grid gap-4 sm:gap-5',
-            isFirstPageSegment(idx)
-              ? 'mt-4 sm:mt-5'
-              : 'mt-6 border-t border-slate-800/80 pt-6 sm:mt-8 sm:pt-8',
-          ]"
+          v-for="(pb, pi) in docView.pages"
+          :key="`page-${pb.pageNum}`"
+          :class="['page-block grid gap-4 sm:gap-5', pageBlockSectionClass(pi)]"
         >
           <div
             class="grid gap-4 lg:items-start lg:gap-6"
-            :class="showThumbColumn(idx, seg.pageNum) ? 'lg:grid-cols-[minmax(0,220px)_minmax(0,1fr)]' : ''"
+            :class="showThumbColumn(pb.pageNum) ? 'lg:grid-cols-[minmax(0,220px)_minmax(0,1fr)]' : ''"
           >
             <figure
-              v-if="showThumbColumn(idx, seg.pageNum) && thumbForPage(seg.pageNum)"
+              v-if="showThumbColumn(pb.pageNum) && thumbForPage(pb.pageNum)"
               class="overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900 shadow-lg ring-1 ring-black/25 lg:sticky lg:top-2"
             >
               <button
                 type="button"
                 class="group relative block w-full cursor-zoom-in p-0 text-left outline-none ring-indigo-400/0 transition hover:ring-2 focus-visible:ring-2 focus-visible:ring-indigo-400"
-                :aria-label="`Ampliar página ${seg.pageNum}`"
-                @click="openPagePreview(seg.pageNum)"
+                :aria-label="`Ampliar página ${pb.pageNum}`"
+                @click="openPagePreview(pb.pageNum)"
               >
                 <div class="relative aspect-[3/4] w-full max-w-[16rem] overflow-hidden sm:max-w-none">
                   <img
-                    :src="thumbForPage(seg.pageNum)"
-                    :alt="`Página ${seg.pageNum} do PDF`"
+                    :src="thumbForPage(pb.pageNum)"
+                    :alt="`Página ${pb.pageNum} do PDF`"
                     class="h-full w-full object-cover object-top transition duration-200 group-hover:brightness-110"
                     loading="lazy"
                   />
                   <span
                     class="pointer-events-none absolute bottom-2 right-2 rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm"
                   >
-                    Página {{ seg.pageNum }}
+                    Página {{ pb.pageNum }}
                   </span>
                   <span
                     class="pointer-events-none absolute left-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white opacity-0 backdrop-blur-sm transition group-hover:opacity-100"
@@ -269,7 +246,7 @@ onUnmounted(() => {
             </figure>
 
             <div
-              v-else-if="showThumbColumn(idx, seg.pageNum) && thumbsLoading"
+              v-else-if="showThumbColumn(pb.pageNum) && thumbsLoading"
               class="flex max-w-[16rem] flex-col justify-center gap-2 rounded-xl border border-dashed border-slate-600 bg-slate-900/40 p-4 text-center lg:sticky lg:top-2"
               aria-busy="true"
             >
@@ -278,7 +255,7 @@ onUnmounted(() => {
             </div>
 
             <div
-              v-else-if="showThumbColumn(idx, seg.pageNum) && !thumbsLoading && !thumbForPage(seg.pageNum)"
+              v-else-if="showThumbColumn(pb.pageNum) && !thumbsLoading && !thumbForPage(pb.pageNum)"
               class="max-w-[16rem] rounded-xl border border-slate-700/60 bg-slate-900/30 p-3 text-center lg:sticky lg:top-2"
             >
               <span class="text-[11px] text-slate-500">{{
@@ -287,32 +264,24 @@ onUnmounted(() => {
             </div>
 
             <div
-              class="markdown-body markdown-body--slice min-w-0"
-              :class="!props.file || !showThumbColumn(idx, seg.pageNum) ? 'lg:col-span-full' : ''"
-              v-html="seg.html"
-            />
-          </div>
-
-          <div
-            v-if="seg.kind === 'page' && isTextoExtraidoSection(seg) && (chartVisualForPage(seg.pageNum) || tableVisualForPage(seg.pageNum))"
-            class="mt-4 border-t border-slate-800/90 pt-4"
-            :data-cy="`page-${seg.pageNum}-reconstructed-visual`"
-          >
-            <template v-if="chartVisualForPage(seg.pageNum)">
-              <p class="mb-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                Gráfico reconstruído (Chart.js)
-              </p>
-              <OcrReconstructedChartCard :config="chartVisualForPage(seg.pageNum)!" embedded />
-            </template>
-            <template v-else-if="tableVisualForPage(seg.pageNum)">
-              <p class="mb-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                Tabela(s) reconstruída(s) a partir do layout
-              </p>
-              <ReconstructedTableBlock
-                :tables="tableVisualForPage(seg.pageNum)!.tables"
-                :note="tableVisualForPage(seg.pageNum)!.note"
+              class="flex min-w-0 flex-col gap-5"
+              :class="!props.file || !showThumbColumn(pb.pageNum) ? 'lg:col-span-full' : ''"
+            >
+              <h2 class="preview-page-title">Página {{ pb.pageNum }}</h2>
+              <div v-for="sec in pb.sections" :key="sec.kind" class="space-y-2">
+                <h3 class="preview-page-subsection">{{ sec.title }}</h3>
+                <div class="markdown-body markdown-body--slice min-w-0" v-html="mdToHtml(sec.bodyMarkdown)" />
+              </div>
+              <PageDocumentVisualBlock
+                v-if="pageHasOcrDerivedVisuals(pb.pageNum)"
+                :page-num="pb.pageNum"
+                :page-visual="pagePreviewByPage.get(pb.pageNum)"
               />
-            </template>
+              <div v-if="visionVisualForPage(pb.pageNum)" :data-cy="`page-${pb.pageNum}-vision-visual`">
+                <h3 class="preview-page-subsection">IA</h3>
+                <VisionEnrichedVisualBlock :visual="visionVisualForPage(pb.pageNum)!" />
+              </div>
+            </div>
           </div>
         </section>
       </template>
@@ -410,6 +379,14 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.preview-page-title {
+  @apply mb-1 scroll-mt-4 border-l-4 border-indigo-500 pl-3 text-base font-semibold text-indigo-100;
+}
+
+.preview-page-subsection {
+  @apply border-b border-slate-700/70 pb-1.5 text-sm font-semibold uppercase tracking-wide text-slate-300;
+}
+
 .markdown-body :deep(h1) {
   @apply mb-4 border-b border-slate-700 pb-2 text-xl font-semibold tracking-tight text-white;
 }

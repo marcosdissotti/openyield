@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useLlmRuntimeStore } from '#entities/llm-runtime'
+import { useAppShellStore } from '#entities/app-shell'
 import LlmStudioModelsDialog from './LlmStudioModelsDialog.vue'
-import LlmRuntimeSettingsDialog from './LlmRuntimeSettingsDialog.vue'
 
 const llm = useLlmRuntimeStore()
+const shell = useAppShellStore()
 const pickerOpen = ref(false)
-const settingsOpen = ref(false)
 
 function onKey(ev: KeyboardEvent) {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'l') {
@@ -44,7 +44,7 @@ function eject() {
       class="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
       title="Ajustes do runtime"
       aria-label="Ajustes"
-      @click="settingsOpen = true"
+      @click="shell.openSettings()"
     >
       ⚙
     </button>
@@ -58,6 +58,5 @@ function eject() {
       ⏏
     </button>
     <LlmStudioModelsDialog v-model:visible="pickerOpen" />
-    <LlmRuntimeSettingsDialog v-model:visible="settingsOpen" />
   </div>
 </template>

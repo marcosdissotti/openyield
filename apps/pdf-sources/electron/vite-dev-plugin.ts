@@ -19,7 +19,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     platform: 'node',
     format: 'esm',
     target: 'node20',
-    external: ['electron'],
+    external: ['electron', 'better-sqlite3'],
     sourcemap: true,
     logLevel: 'warning',
   })
@@ -31,7 +31,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     platform: 'node',
     format: 'cjs',
     target: 'node20',
-    external: ['electron'],
+    external: ['electron', 'better-sqlite3'],
     sourcemap: true,
     logLevel: 'warning',
   })

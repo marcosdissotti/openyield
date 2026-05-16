@@ -7,5 +7,11 @@ export interface InferredHtmlTable {
 }
 
 export type PagePreviewVisual =
-  | { pageNum: number; mode: 'chart'; chart: OcrChartReconstruction }
+  | {
+      pageNum: number
+      mode: 'chart'
+      chart: OcrChartReconstruction
+      /** Layout tabular na mesma página: mostra-se no preview; ao VL envia-se só recorte heurístico do gráfico. */
+      companionTables?: InferredHtmlTable[]
+    }
   | { pageNum: number; mode: 'table'; sourceLabel: string; tables: InferredHtmlTable[]; note: string }

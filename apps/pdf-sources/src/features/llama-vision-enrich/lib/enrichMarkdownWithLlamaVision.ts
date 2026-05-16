@@ -1,18 +1,37 @@
 import { getDocument } from 'pdfjs-dist'
 import { ensurePdfWorker } from '#shared/config/pdfjs'
 import type { ExtractionProgress } from '#shared/model/extractionProgress'
-import { renderPdfPageToPng } from '#features/extract-pdf-rich/lib/renderPdfPageToPng'
+import { renderPdfPageRegionToPng, renderPdfPageToPng } from '#features/extract-pdf-rich/lib/renderPdfPageToPng'
 import { chatCompletion, LlamaRuntimeError, type ChatMessage } from '#features/llama-runtime/lib/llamaRuntimeApi'
 import { inferModelCapabilitiesFromFileName } from '#features/llama-runtime/lib/inferModelCapabilities'
 import { selectPagesForVisionEnrich } from './selectPagesForVisionEnrich'
+import { buildVisionFinancialChartInstruction } from './visionFinancialChartPrompt'
+import { isVisionExtractionEmpty, parseVisionModelReply } from './visionChartJsonParse'
+import { visionImageCropNormForPage } from './visionImageCropNorm'
 
 export interface EnrichVisionOptions {
   baseUrl?: string
   /** Nome passado ao corpo `model` do OpenAI-compatible API */
   model: string
+  /** Raster PDF (72×scale). Por defeito 2.5; depois aplica-se `visionMaxLongEdgePx`. */
   visionScale?: number
+  /**
+   * Lado mais comprido da imagem enviada ao VL (px). Reduz VRAM; `0` = não redimensionar.
+   * Por defeito 1536 (compromisso leitura de gráfico pequeno vs. memória).
+   */
+  visionMaxLongEdgePx?: number
+  /**
+   * Pausa (ms) entre um pedido de visão concluído e o seguinte — útil se o LM Studio falhar sob carga.
+   * Por defeito 0.
+   */
+  visionCooldownMs?: number
   timeoutMs?: number
   onProgress?: (p: ExtractionProgress) => void
+  /**
+   * Páginas com bitmap embutido (1-based), da extração PDF.
+   * Necessário para enviar gráficos **só em imagem** ao VL quando o preview não marca `chart`.
+   */
+  bitmapPageNumbers?: readonly number[]
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -22,6 +41,50 @@ function blobToDataUrl(blob: Blob): Promise<string> {
     r.onerror = () => reject(new Error('FILE_READ_FAILED'))
     r.readAsDataURL(blob)
   })
+}
+
+/**
+ * Redimensiona e envia JPEG (menor que PNG) para o VL — evita OOM em modelos 4B / GPUs modestas.
+ */
+async function blobToVisionDataUrl(blob: Blob, maxLongEdgePx: number): Promise<string> {
+  if (maxLongEdgePx <= 0) {
+    return blobToDataUrl(blob)
+  }
+  let bmp: ImageBitmap
+  try {
+    bmp = await createImageBitmap(blob)
+  } catch {
+    return blobToDataUrl(blob)
+  }
+  try {
+    const { width: w, height: h } = bmp
+    const long = Math.max(w, h)
+    const scale = long > maxLongEdgePx ? maxLongEdgePx / long : 1
+    const cw = Math.max(1, Math.round(w * scale))
+    const ch = Math.max(1, Math.round(h * scale))
+    if (scale >= 1 - 1e-6) {
+      return blobToDataUrl(blob)
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = cw
+    canvas.height = ch
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return blobToDataUrl(blob)
+    }
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(bmp, 0, 0, cw, ch)
+    const jpeg = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.88),
+    )
+    if (!jpeg) {
+      return blobToDataUrl(blob)
+    }
+    return blobToDataUrl(jpeg)
+  } finally {
+    bmp.close()
+  }
 }
 
 function extractServerDetailFromLlamaError(err: LlamaRuntimeError): string {
@@ -52,32 +115,26 @@ function visionEnrichFailureNote(err: unknown): string {
       `Resposta: \`${detail}\``
     )
   }
+  if (/crashed|memory slot|decode.*image|failed to decode|channel error|exit code/i.test(detail)) {
+    return (
+      '_Visão indisponível (modelo/servidor ao processar a imagem)._ Muito comum com **VRAM cheia** ou imagem **demasiado grande** ' +
+      'para o VL (ex.: logs `failed to find a memory slot`, `failed to decode image`). **Sugestões:** reduzir `VITE_VISION_MAX_LONG_EDGE` (ex. 1280), ' +
+      'subir offload/GPU no LM Studio, ou modelo VL com mais capacidade. ' +
+      `Resposta: \`${detail}\``
+    )
+  }
   return `_Visão indisponível._ \`${detail}\``
 }
 
-interface VisionJsonPage {
-  pageNum: number
-  charts: unknown[]
-}
-
-function parseVisionJson(text: string): VisionJsonPage | null {
-  const trimmed = text.trim()
-  const start = trimmed.indexOf('{')
-  const end = trimmed.lastIndexOf('}')
-  if (start < 0 || end <= start) return null
-  try {
-    const obj = JSON.parse(trimmed.slice(start, end + 1)) as VisionJsonPage
-    if (typeof obj.pageNum !== 'number' || !Array.isArray(obj.charts)) return null
-    return obj
-  } catch {
-    return null
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
- * Enriquece o markdown com visão (llama-server multimodal, API OpenAI-compatible) **apenas nas páginas**
- * em que o pipeline já inferiu um **gráfico** plausível (OCR/layout — o mesmo critério do preview Chart.js).
- * Páginas só-**tabela** (layout TSV sem gráfico) não geram PNG nem chamadas ao modelo.
+ * Enriquece o markdown com visão (llama-server multimodal, API OpenAI-compatible) nas páginas candidatas
+ * (gráfico inferido no preview e/ou bitmap sem ser só tabela de layout). Quando a mesma página tem
+ * gráfico OCR **e** tabelas de layout, envia-se ao VL um **recorte superior** da página (heurística).
+ * Páginas só tabela (sem gráfico) não geram chamadas ao modelo.
  */
 export async function enrichMarkdownWithLlamaVision(
   file: File,
@@ -91,12 +148,16 @@ export async function enrichMarkdownWithLlamaVision(
 
   ensurePdfWorker()
   const data = await file.arrayBuffer()
-  const pdf = await getDocument({ data }).promise
+  const pdf = await getDocument({ data: data.slice(0) }).promise
   const numPages = pdf.numPages
-  const scale = options.visionScale ?? 1.35
+  const scale = options.visionScale ?? 2.5
+  const visionMaxLongEdgePx = options.visionMaxLongEdgePx ?? 1536
+  const visionCooldownMs = Math.max(0, options.visionCooldownMs ?? 0)
   const startedAt = Date.now()
 
-  const chartPages = selectPagesForVisionEnrich(llmMarkdown)
+  const chartPages = selectPagesForVisionEnrich(llmMarkdown, {
+    bitmapPageNumbers: options.bitmapPageNumbers,
+  })
   if (chartPages.length === 0) {
     options.onProgress?.({
       phase: 'vision',
@@ -104,47 +165,45 @@ export async function enrichMarkdownWithLlamaVision(
       pageTotal: 0,
       percent: 100,
       label: 'Visão omitida',
-      detail: 'Nenhuma página com gráfico candidato (só tabelas ou texto); não se geraram PNG para o modelo.',
+      detail:
+        'Nenhuma página candidata: gráfico inferido no preview, ou bitmap **sem** classificação como tabela de layout.',
     })
-    return llmMarkdown
+    return (
+      llmMarkdown.trimEnd() +
+      '\n\n---\n\n## Enriquecimento por visão (LLM)\n\n' +
+      '*Nenhuma página candidata ao VL.* Entram páginas com **gráfico** inferido no preview, ou com **bitmap** no PDF desde que o layout **não** seja classificado como **só tabela** (quadros financeiros em TSV não são enviados, mesmo com imagem).\n'
+    )
   }
 
   const parts: string[] = [llmMarkdown.trimEnd(), '', '---', '', '## Enriquecimento por visão (LLM)', '']
 
+  options.onProgress?.({
+    phase: 'vision',
+    pageCurrent: 0,
+    pageTotal: chartPages.length,
+    percent: 0,
+    label: 'Visão (LLM)',
+    detail: `A contactar o modelo para ${chartPages.length} página(s) com gráfico candidato…`,
+  })
+
   try {
     const totalVision = chartPages.length
-    for (let i = 0; i < chartPages.length; i++) {
-      const pageNum = chartPages[i]!
-      if (pageNum < 1 || pageNum > numPages) continue
+    let completed = 0
 
-      const elapsedSec = (Date.now() - startedAt) / 1000
-      const frac = (i + 1) / totalVision
-      let etaSeconds: number | undefined
-      if (frac >= 0.08 && i + 1 < totalVision) {
-        etaSeconds = Math.max(1, Math.round(elapsedSec / frac - elapsedSec))
-      }
-      options.onProgress?.({
-        phase: 'vision',
-        pageCurrent: i + 1,
-        pageTotal: totalVision,
-        percent: Math.round(((i + 1) / totalVision) * 100),
-        label: `Visão (gráfico) ${i + 1}/${totalVision}`,
-        detail: `Página ${pageNum}: raster para o modelo multimodal…`,
-        etaSeconds,
-      })
+    async function oneVisionPage(pageNum: number): Promise<string> {
+      if (pageNum < 1 || pageNum > numPages) return ''
 
       const page = await pdf.getPage(pageNum)
-      const png = await renderPdfPageToPng(page, scale)
-      const dataUrl = await blobToDataUrl(png)
+      const cropNorm = visionImageCropNormForPage(llmMarkdown, pageNum)
+      const png =
+        cropNorm != null
+          ? await renderPdfPageRegionToPng(page, scale, cropNorm)
+          : await renderPdfPageToPng(page, scale)
+      const dataUrl = await blobToVisionDataUrl(png, visionMaxLongEdgePx)
 
-      const instruction = [
-        'És um assistente de análise de relatórios PDF.',
-        `Página: ${pageNum} de ${numPages} (foco: gráfico já sugerido pelo pipeline OCR).`,
-        'Devolve APENAS um único objeto JSON válido (sem markdown à volta) com o formato:',
-        '{"pageNum": number, "charts": [{"title": string, "chartKind": "line"|"bar"|"other", "labels": string[], "datasets": [{"label": string, "data": number[]}]}]}',
-        'Se não houver gráficos legíveis na imagem, usa "charts": [].',
-        'Responde só com JSON.',
-      ].join('\n')
+      const instruction = buildVisionFinancialChartInstruction(pageNum, numPages, {
+        imageIsUpperPageCrop: cropNorm != null,
+      })
 
       const messages: ChatMessage[] = [
         {
@@ -162,21 +221,55 @@ export async function enrichMarkdownWithLlamaVision(
           baseUrl: options.baseUrl,
           model: options.model,
           messages,
-          timeoutMs: options.timeoutMs ?? 180_000,
+          temperature: 0,
+          timeoutMs: options.timeoutMs ?? 300_000,
           // Não usar response_format json_object: LM Studio devolve 400
           // ("type" must be json_schema or text). O prompt já exige JSON puro.
         })
         reply = out.text
       } catch (e) {
-        parts.push(`### Página ${pageNum}`, '', visionEnrichFailureNote(e), '')
-        continue
+        return [`### Página ${pageNum}`, '', visionEnrichFailureNote(e), ''].join('\n')
       }
 
-      const parsed = parseVisionJson(reply)
+      const parsed = parseVisionModelReply(reply, pageNum)
       if (parsed) {
-        parts.push(`### Página ${pageNum}`, '', '```json', JSON.stringify(parsed, null, 2), '```', '')
-      } else {
-        parts.push(`### Página ${pageNum}`, '', '```', reply.slice(0, 8000), '```', '')
+        const lines: string[] = [`### Página ${pageNum}`, '']
+        if (isVisionExtractionEmpty(parsed)) {
+          lines.push(
+            '*O modelo de visão não extraiu séries estruturadas nesta imagem* (`chartType: "none"` ou `datasets` vazio). ' +
+              '*Pode ser falso negativo* (gráfico pequeno na página inteira, cores, modelo VL pequeno) ou a página ser sobretudo tabela/texto. ' +
+              'Recorte manual do gráfico no LM Studio costuma melhorar; **modelos VL maiores** (ex. 7B+) também.',
+            '',
+          )
+        }
+        lines.push('```json', JSON.stringify(parsed.value, null, 2), '```', '')
+        return lines.join('\n')
+      }
+      return [`### Página ${pageNum}`, '', '```', reply.slice(0, 8000), '```', ''].join('\n')
+    }
+
+    for (let i = 0; i < chartPages.length; i++) {
+      const pageNum = chartPages[i]!
+      const block = await oneVisionPage(pageNum)
+      if (block) parts.push(block)
+      completed++
+      const elapsedSec = (Date.now() - startedAt) / 1000
+      const frac = completed / totalVision
+      let etaSeconds: number | undefined
+      if (frac >= 0.08 && completed < totalVision) {
+        etaSeconds = Math.max(1, Math.round(elapsedSec / frac - elapsedSec))
+      }
+      options.onProgress?.({
+        phase: 'vision',
+        pageCurrent: completed,
+        pageTotal: totalVision,
+        percent: Math.round((completed / totalVision) * 100),
+        label: `Visão (gráfico) ${completed}/${totalVision}`,
+        detail: `Página ${pageNum}: um pedido de cada vez (sequencial).`,
+        etaSeconds,
+      })
+      if (visionCooldownMs > 0 && i + 1 < chartPages.length) {
+        await sleep(visionCooldownMs)
       }
     }
   } finally {

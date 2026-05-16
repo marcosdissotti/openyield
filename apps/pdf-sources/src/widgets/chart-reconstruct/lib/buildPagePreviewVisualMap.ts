@@ -13,8 +13,9 @@ function allPageNums(markdown: string): number[] {
 }
 
 /**
- * Por página: um gráfico Chart.js quando a reconstrução tabular/solta for plausível;
- * caso contrário, tabela(s) HTML a partir do bloco layout (TSV), para páginas só com quadros.
+ * Por página: gráfico Chart.js quando a reconstrução for plausível; se o layout TSV tiver também
+ * quadros tabulares na mesma página, ficam em `companionTables` (gráfico + tabelas no preview;
+ * o VL pode usar recorte só do gráfico). Sem gráfico: tabela(s) a partir do layout.
  */
 export function buildPagePreviewVisualMap(markdown: string): Map<number, PagePreviewVisual> {
   const md = markdown.replace(/\r\n/g, '\n')
@@ -25,20 +26,28 @@ export function buildPagePreviewVisualMap(markdown: string): Map<number, PagePre
 
   for (const pageNum of allPageNums(md)) {
     const chart = chartByPage.get(pageNum)
+    const layout = layoutBodies.find((b) => b.pageNum === pageNum)
+    const layoutTablesRaw =
+      layout?.body != null
+        ? tryExtractTablesFromTsvBody(layout.body, `Página ${pageNum}`)
+        : []
+    const companionTables = layoutTablesRaw.filter((t) => t.rows.length >= 2 && t.headers.length >= 2)
+
     if (chart) {
-      map.set(pageNum, { pageNum, mode: 'chart', chart })
+      if (companionTables.length) {
+        map.set(pageNum, { pageNum, mode: 'chart', chart, companionTables })
+      } else {
+        map.set(pageNum, { pageNum, mode: 'chart', chart })
+      }
       continue
     }
-    const layout = layoutBodies.find((b) => b.pageNum === pageNum)
     if (!layout?.body) continue
-    const tables = tryExtractTablesFromTsvBody(layout.body, `Página ${pageNum}`)
-    const usable = tables.filter((t) => t.rows.length >= 2 && t.headers.length >= 2)
-    if (!usable.length) continue
+    if (!companionTables.length) continue
     map.set(pageNum, {
       pageNum,
       mode: 'table',
       sourceLabel: 'layout',
-      tables: usable,
+      tables: companionTables,
       note: 'Tabela(s) inferida(s) do layout — não foi detetado um gráfico plausível para Chart.js nesta página.',
     })
   }
