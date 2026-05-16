@@ -45,7 +45,7 @@ export interface PdfSourcesElectronApi {
       body_markdown: string
       sort_order: number
     }>
-  }) => Promise<{ pdfPath: string; fileSha256: string } | void>
+  }) => Promise<{ pdfPath: string; fileSha256: string; aiSummary?: string; aiSummaryUpdatedAt?: string } | void>
   pdfDbDeleteDocument: (documentId: string) => Promise<void>
   pdfDbReadDocumentPdf: (documentId: string) => Promise<{ fileName: string; bytes: ArrayBuffer } | null>
   pdfDbPersistStudioReport: (payload: {

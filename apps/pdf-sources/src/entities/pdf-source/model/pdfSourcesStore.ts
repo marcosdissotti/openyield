@@ -14,6 +14,8 @@ export interface PdfSource {
   pdfPath?: string
   extractedText: string
   llmMarkdown: string
+  aiSummary?: string
+  aiSummaryUpdatedAt?: string
   status: 'pending' | 'ready' | 'error'
   error?: string
   extractionProgress?: ExtractionProgress
@@ -69,12 +71,14 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
   function complete(
     id: string,
     payload: { extractedText: string; llmMarkdown: string },
-    opts?: { pdfPath?: string },
+    opts?: { pdfPath?: string; aiSummary?: string; aiSummaryUpdatedAt?: string },
   ) {
     const s = sources.value.find((x) => x.id === id)
     if (!s) return
     s.extractedText = payload.extractedText
     s.llmMarkdown = payload.llmMarkdown
+    if (opts?.aiSummary !== undefined) s.aiSummary = opts.aiSummary
+    if (opts?.aiSummaryUpdatedAt !== undefined) s.aiSummaryUpdatedAt = opts.aiSummaryUpdatedAt
     s.extractionProgress = undefined
     s.status = 'ready'
     if (opts?.pdfPath) s.pdfPath = opts.pdfPath
@@ -132,6 +136,8 @@ export const usePdfSourcesStore = defineStore('pdfSources', () => {
       fileName: r.file_name,
       extractedText: r.raw_plain_text,
       llmMarkdown: r.llm_markdown,
+      aiSummary: r.ai_summary,
+      aiSummaryUpdatedAt: r.ai_summary_updated_at,
       status: 'ready' as const,
       pdfPath: r.pdf_path,
     }))

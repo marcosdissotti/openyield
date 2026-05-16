@@ -18,6 +18,8 @@ export interface DocumentRow {
   updated_at: string
   raw_plain_text: string
   llm_markdown: string
+  ai_summary: string
+  ai_summary_updated_at: string
 }
 
 export interface StudioReportRow {

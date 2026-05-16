@@ -143,6 +143,13 @@ function metadataToDocumentRow(id: string, metadata: VectorMetadata): DocumentRo
     updated_at: typeof metadata.updatedAt === 'string' ? metadata.updatedAt : new Date().toISOString(),
     raw_plain_text: typeof metadata.rawPlainText === 'string' ? metadata.rawPlainText : '',
     llm_markdown: typeof metadata.llmMarkdown === 'string' ? metadata.llmMarkdown : '',
+    ai_summary: typeof metadata.aiSummary === 'string' ? metadata.aiSummary : '',
+    ai_summary_updated_at:
+      typeof metadata.aiSummaryUpdatedAt === 'string'
+        ? metadata.aiSummaryUpdatedAt
+        : typeof metadata.updatedAt === 'string'
+          ? metadata.updatedAt
+          : new Date().toISOString(),
   }
 }
 
@@ -222,6 +229,72 @@ function cleanChunkText(text: string): string {
     .replace(/[ \u00a0]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+function foldText(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+}
+
+function uniqueStrings(values: string[], limit: number): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    const normalized = value.trim().replace(/\s+/g, ' ')
+    if (!normalized || seen.has(normalized.toLowerCase())) continue
+    seen.add(normalized.toLowerCase())
+    out.push(normalized)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+function buildDocumentAiSummary(input: { fileName: string; rawPlainText: string; llmMarkdown: string }): string {
+  const source = cleanChunkText(input.llmMarkdown || input.rawPlainText)
+  const searchable = source.slice(0, 180_000)
+  const folded = foldText(searchable)
+  const ticker =
+    searchable.match(/\bB3\s*[:\-]\s*([A-Z]{4}\d{1,2})\b/i)?.[1]?.toUpperCase() ??
+    searchable.match(/\b(?:ticker|c[oó]digo)\s*[:\-]\s*([A-Z]{4}\d{1,2})\b/i)?.[1]?.toUpperCase() ??
+    null
+  const periods = uniqueStrings(
+    [
+      ...(searchable.match(/\b[1-4]\s*T\s*(?:20)?\d{2}\b/gi) ?? []),
+      ...(searchable.match(/\bQ[1-4]\s*(?:20)?\d{2}\b/gi) ?? []),
+      ...(searchable.match(/\b20\d{2}\b/g) ?? []),
+    ],
+    10,
+  )
+  const relevantLine = (line: string) => {
+    const f = foldText(line)
+    return (
+      /(receita|ebitda|ebit|lucro|margem|divida|endivid|caixa|capex|invest|inadimpl|pecld|perdas|volume|agua|esgoto|tarifa|reajuste|regulator|concess|roic|roe|patrimonio|ativo|passivo)/i.test(f) &&
+      /\d/.test(line)
+    )
+  }
+  const lines = uniqueStrings(
+    searchable
+      .split(/\n|(?<=\.)\s+/)
+      .map((line) => line.replace(/^#+\s*/, '').trim())
+      .filter((line) => line.length >= 18 && line.length <= 260 && relevantLine(line)),
+    28,
+  )
+  const title = searchable.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? input.fileName
+  const compact = [
+    'Resumo interno para busca e chat (não visual):',
+    `Documento: ${title}`,
+    `Arquivo: ${input.fileName}`,
+    ticker ? `Ticker detectado: ${ticker}` : null,
+    periods.length ? `Períodos detectados: ${periods.join(', ')}` : null,
+    '',
+    'Linhas-chave extraídas:',
+    ...(lines.length ? lines.map((line) => `- ${line}`) : ['- Sem linhas financeiras confiáveis detectadas no cabeçalho interno.']),
+    '',
+    'Estratégia sugerida ao harness:',
+    '- Use este resumo primeiro para localizar campos e períodos.',
+    '- Se o campo não aparecer aqui, procure nos chunks vetoriais do mesmo notebook.',
+    '- Se ainda faltar evidência, aprofunde no texto extraído do PDF específico.',
+  ].filter(Boolean).join('\n')
+  return compact.slice(0, 4500)
 }
 
 function splitLongText(text: string): string[] {
@@ -361,17 +434,40 @@ export class VectorService {
     await this.ensureIndexCreated()
     const meta = readWorkspaceMeta()
     const items = (await this.index.listItems()) as StoredIndexItem[]
+    const metadataByItemId = new Map<string, VectorMetadata>()
+    for (const item of items) {
+      const metadata = this.itemMetadata(item)
+      if (
+        metadata.kind === 'document' &&
+        typeof metadata.aiSummary !== 'string' &&
+        (typeof metadata.llmMarkdown === 'string' || typeof metadata.rawPlainText === 'string')
+      ) {
+        const now = new Date().toISOString()
+        metadata.aiSummary = buildDocumentAiSummary({
+          fileName: typeof metadata.fileName === 'string' ? metadata.fileName : item.id,
+          rawPlainText: typeof metadata.rawPlainText === 'string' ? metadata.rawPlainText : '',
+          llmMarkdown: typeof metadata.llmMarkdown === 'string' ? metadata.llmMarkdown : '',
+        })
+        metadata.aiSummaryUpdatedAt = now
+        await this.index.upsertItem({
+          id: item.id,
+          vector: item.vector,
+          metadata: toStoredMetadata(metadata),
+        })
+      }
+      metadataByItemId.set(item.id, metadata)
+    }
     const documents = items
       .map((item) =>
         metadataToDocumentRow(
           item.id,
-          readItemMetadataFile(this.index.folderPath, item.metadataFile) ?? fromStoredMetadata(item.metadata),
+          metadataByItemId.get(item.id) ?? readItemMetadataFile(this.index.folderPath, item.metadataFile) ?? fromStoredMetadata(item.metadata),
         ),
       )
       .filter((row): row is DocumentRow => row != null)
       .sort((a, b) => a.notebook_id.localeCompare(b.notebook_id) || a.created_at.localeCompare(b.created_at))
     const vectorReports = items
-      .map((item) => metadataToStudioReportRow(item.id, this.itemMetadata(item)))
+      .map((item) => metadataToStudioReportRow(item.id, metadataByItemId.get(item.id) ?? this.itemMetadata(item)))
       .filter((row): row is StudioReportRow => row != null)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
     const reportsById = new Map<string, StudioReportRow>()
@@ -483,7 +579,7 @@ export class VectorService {
     rawPlainText: string
     llmMarkdown: string
     pageSections: PageSectionInput[]
-  }): Promise<{ pdfPath: string; fileSha256: string }> {
+  }): Promise<{ pdfPath: string; fileSha256: string; aiSummary: string; aiSummaryUpdatedAt: string }> {
     await this.ensureIndexCreated()
     const bytes = Buffer.from(input.pdfBytes)
     const hash = sha256Hex(bytes)
@@ -499,6 +595,11 @@ export class VectorService {
       ? readItemMetadataFile(this.index.folderPath, existing.metadataFile) ?? fromStoredMetadata(existing.metadata)
       : {}
     const now = new Date().toISOString()
+    const aiSummary = buildDocumentAiSummary({
+      fileName: input.fileName,
+      rawPlainText: input.rawPlainText,
+      llmMarkdown: input.llmMarkdown,
+    })
     await this.adicionarDocumento(input.llmMarkdown || input.rawPlainText, {
       ...existingMeta,
       kind: 'document',
@@ -514,6 +615,8 @@ export class VectorService {
       updatedAt: now,
       rawPlainText: input.rawPlainText,
       llmMarkdown: input.llmMarkdown,
+      aiSummary,
+      aiSummaryUpdatedAt: now,
       pageSections: input.pageSections,
     })
     await this.upsertDocumentChunks({
@@ -522,7 +625,7 @@ export class VectorService {
       fileName: input.fileName,
       sourceText: input.llmMarkdown || input.rawPlainText,
     })
-    return { pdfPath: absPdf, fileSha256: hash }
+    return { pdfPath: absPdf, fileSha256: hash, aiSummary, aiSummaryUpdatedAt: now }
   }
 
   async deleteDocument(documentId: string): Promise<void> {

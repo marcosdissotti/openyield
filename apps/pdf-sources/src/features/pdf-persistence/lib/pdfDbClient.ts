@@ -41,7 +41,7 @@ export async function pdfDbPersistDocument(payload: {
     body_markdown: string
     sort_order: number
   }>
-}): Promise<{ pdfPath: string; fileSha256: string } | void> {
+}): Promise<{ pdfPath: string; fileSha256: string; aiSummary?: string; aiSummaryUpdatedAt?: string } | void> {
   return window.pdfSourcesElectron?.pdfDbPersistDocument?.(payload)
 }
 

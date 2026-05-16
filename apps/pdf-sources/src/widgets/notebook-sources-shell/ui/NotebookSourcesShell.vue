@@ -43,7 +43,30 @@ const dropRef = ref<InstanceType<typeof PdfDropArea> | null>(null)
 const panelTab = ref<'raw' | 'llm'>('llm')
 const restoringPreviewFiles = new Set<string>()
 const chatDraft = ref('')
-const chatMessages = ref<Array<{ role: 'user' | 'assistant'; text: string }>>([])
+interface ChatStep {
+  label: string
+  status: 'running' | 'done' | 'warn' | 'error'
+  detail?: string
+}
+
+interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  status?: 'thinking' | 'streaming' | 'done' | 'error'
+  steps?: ChatStep[]
+  score?: number
+}
+
+interface ChatPlan {
+  intent: 'lookup' | 'compare' | 'report' | 'general'
+  fields: string[]
+  keywords: string[]
+  depth: 'fast' | 'deep'
+}
+
+const chatMessages = ref<ChatMessage[]>([])
+const chatRunning = ref(false)
 const activeStudioReportId = ref<string | null>(null)
 const activeFundamentalSnapshotId = ref<string | null>(null)
 const developerLogsVisible = ref(false)
@@ -362,6 +385,8 @@ async function processPdfSource(id: string, file: File, notebookId: string) {
         const src = store.sources.find((x) => x.id === id)
         if (src && persisted?.pdfPath) {
           src.pdfPath = persisted.pdfPath
+          if (persisted.aiSummary !== undefined) src.aiSummary = persisted.aiSummary
+          if (persisted.aiSummaryUpdatedAt !== undefined) src.aiSummaryUpdatedAt = persisted.aiSummaryUpdatedAt
           logger.info('Document persisted successfully', { id, pdfPath: persisted.pdfPath })
         }
       } catch (e) {
@@ -396,18 +421,428 @@ function useStarterQuestion(text: string) {
   chatDraft.value = text
 }
 
-function submitChat() {
+function setChatStep(message: ChatMessage, label: string, status: ChatStep['status'], detail?: string) {
+  const steps = message.steps ?? (message.steps = [])
+  const existing = steps.find((step) => step.label === label)
+  if (existing) {
+    existing.status = status
+    existing.detail = detail
+  } else {
+    steps.push({ label, status, detail })
+  }
+}
+
+function latestSnapshotContext(): string {
+  const snapshot = fundamentalStore.latestForNotebook(notebook.activeNotebookId)
+  if (!snapshot) return 'Sem snapshot fundamentalista estruturado neste caderno.'
+  const rows = snapshot.fields
+    .filter((field) => !isMissingFundamentalValue(field.value))
+    .map((field) => {
+      const evidence = [field.source_file, field.source_page ? `pág. ${field.source_page}` : null, field.source_line]
+        .filter(Boolean)
+        .join(' | ')
+      return `- ${field.label} (${field.key}): ${field.value}${evidence ? ` [${evidence}]` : ''}${field.calculation ? ` | cálculo: ${field.calculation}` : ''}`
+    })
+  return [`Snapshot fundamentalista: ${snapshot.title} ${snapshot.ticker ?? ''}`, ...rows].join('\n')
+}
+
+function recentChatHistory(): string {
+  return chatMessages.value
+    .slice(-8)
+    .filter((message) => message.status !== 'thinking' && message.text.trim())
+    .map((message) => `${message.role === 'user' ? 'Usuário' : 'Assistente'}: ${message.text.slice(0, 1400)}`)
+    .join('\n\n')
+}
+
+function compactPromptTextForChat(text: string): string {
+  return cleanPromptText(text).slice(0, 2500)
+}
+
+function normalizeQuestionText(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+function deterministicChatPlan(question: string): ChatPlan {
+  const q = normalizeQuestionText(question)
+  const fields: string[] = []
+  const keywords = new Set<string>()
+  const add = (field: string, words: string[]) => {
+    fields.push(field)
+    words.forEach((word) => keywords.add(word))
+  }
+  if (/(marg(?:em|in)?\s+e(?:b|v)it|ebit\s+margin)/i.test(q)) {
+    add('marg_ebit', ['margem ebit', 'marg ebit', 'ebit', 'receita liquida'])
+  }
+  if (/marg(?:em|in)?\s+bruta/i.test(q)) add('marg_bruta', ['margem bruta', 'lucro bruto', 'receita liquida'])
+  if (/marg(?:em|in)?\s+liquida/i.test(q)) add('marg_liquida', ['margem liquida', 'lucro liquido', 'receita liquida'])
+  if (/\broe\b/i.test(q)) add('roe', ['roe', 'lucro liquido', 'patrimonio liquido'])
+  if (/\broic\b/i.test(q)) add('roic', ['roic', 'ebit', 'capital investido'])
+  if (/receita/i.test(q)) add('receita_liquida_12m', ['receita liquida', 'receita'])
+  if (/\bebit\b|\bevit\b/i.test(q)) add('ebit_12m', ['ebit'])
+  if (/lucro/i.test(q)) add('lucro_liquido_12m', ['lucro liquido', 'lucro'])
+  if (/inadimpl|nao pagant|não pagant|pecld|contas a receber/i.test(q)) {
+    add('inadimplencia', ['inadimplencia', 'nao pagantes', 'PECLD', 'contas a receber'])
+  }
+  if (!keywords.size) {
+    question.split(/\s+/).filter((word) => word.length > 3).slice(0, 8).forEach((word) => keywords.add(word))
+  }
+  const compare = /\bcompar|versus| vs\.? |\be\b.*\b(q|t)[1-4]|\b(q|t)[1-4].*\b(q|t)[1-4]/i.test(q)
+  const report = /\brelatorio|relatório|crie|gere\b/i.test(q)
+  return {
+    intent: report ? 'report' : compare ? 'compare' : fields.length ? 'lookup' : 'general',
+    fields: [...new Set(fields)],
+    keywords: [...keywords].slice(0, 12),
+    depth: compare || report ? 'deep' : 'fast',
+  }
+}
+
+async function planChatQuery(question: string, message: ChatMessage): Promise<ChatPlan> {
+  const fallback = deterministicChatPlan(question)
+  const model = llmRuntime.chatModelName.trim()
+  if (!model || !llmRuntime.effectiveServerBase) return fallback
+  setChatStep(message, 'Planejando busca', 'running', 'Identificando campo, período e ferramenta mais barata.')
+  try {
+    const out = await withTimeout(
+      chatCompletion({
+        baseUrl: llmRuntime.effectiveServerBase,
+        apiToken: llmRuntime.llmApiToken,
+        model,
+        temperature: 0,
+        timeoutMs: 8_000,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              'Você é o planejador de um harness financeiro chamado OpenYield.',
+              'Ferramentas disponíveis: banco estruturado de snapshots, resumos internos dos PDFs, índice vetorial por chunks, busca local em texto extraído, geração de relatórios.',
+              'Retorne somente JSON no formato {"intent":"lookup|compare|report|general","fields":["marg_ebit"],"keywords":["margem ebit"],"depth":"fast|deep"}.',
+              'Mapeie typos: "evit" geralmente significa EBIT; "margim" significa margem.',
+              `Pergunta: ${question}`,
+            ].join('\n'),
+          },
+        ],
+      }),
+      5_000,
+      'Planejamento por IA demorou; usando plano determinístico.',
+    )
+    const parsed = extractJsonObject(out.text) as Partial<ChatPlan>
+    const plan: ChatPlan = {
+      intent:
+        parsed.intent === 'lookup' || parsed.intent === 'compare' || parsed.intent === 'report' || parsed.intent === 'general'
+          ? parsed.intent
+          : fallback.intent,
+      fields: Array.isArray(parsed.fields) && parsed.fields.length ? parsed.fields.map(String) : fallback.fields,
+      keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords.map(String) : fallback.keywords,
+      depth: parsed.depth === 'deep' || parsed.depth === 'fast' ? parsed.depth : fallback.depth,
+    }
+    setChatStep(message, 'Planejando busca', 'done', `${plan.intent}; ${plan.keywords.slice(0, 4).join(', ')}`)
+    return plan
+  } catch (e) {
+    setChatStep(message, 'Planejando busca', 'warn', e instanceof Error ? e.message : String(e))
+    return fallback
+  }
+}
+
+function sourceSummaryForChat(source: { fileName: string; aiSummary?: string; llmMarkdown: string; extractedText: string }): string {
+  if (source.aiSummary?.trim()) return cleanPromptText(source.aiSummary).slice(0, 4500)
+  return compactPromptTextForChat(source.llmMarkdown || source.extractedText)
+}
+
+function matchingLocalLines(text: string, plan: ChatPlan, limit = 10): string[] {
+  const foldedKeywords = plan.keywords.map(normalizeQuestionText).filter((word) => word.length > 2)
+  if (!foldedKeywords.length) return []
+  const lines = cleanPromptText(text)
+    .slice(0, plan.depth === 'deep' ? 120_000 : 45_000)
+    .split(/\n|(?<=\.)\s+/)
+  const out: string[] = []
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (line.length < 12 || line.length > 320 || !/\d/.test(line)) continue
+    const folded = normalizeQuestionText(line)
+    if (!foldedKeywords.some((word) => folded.includes(word))) continue
+    out.push(line)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+function localChatEvidence(plan: ChatPlan): string {
+  return readySources.value
+    .slice(0, 6)
+    .map((source) => {
+      const summary = sourceSummaryForChat(source)
+      const lines = matchingLocalLines(summary, plan, 8)
+      const body = lines.length ? lines.map((line) => `- ${line}`).join('\n') : summary.slice(0, 2500)
+      return `[${source.fileName} | resumo interno]\n${body}`
+    })
+    .join('\n\n---\n\n')
+}
+
+async function collectChatEvidence(question: string, message: ChatMessage, plan: ChatPlan): Promise<string> {
+  const notebookId = notebook.activeNotebookId
+  if (!notebookId) return ''
+  setChatStep(message, 'Resumos internos', 'running', 'Lendo cabeçalhos persistidos dos PDFs.')
+  await nextTick()
+  const fallback = localChatEvidence(plan)
+  setChatStep(message, 'Resumos internos', fallback.trim() ? 'done' : 'warn', fallback.trim() ? 'Pronto.' : 'Sem resumo local.')
+  if (!window.pdfSourcesElectron?.vectorBuscarChunksNotebook) {
+    setChatStep(message, 'Índice vetorial', 'warn', 'Indisponível; usando fallback local.')
+    return fallback
+  }
+  setChatStep(message, 'Índice vetorial', 'running', 'Consulta curta; fallback local já preparado.')
+  try {
+    const vectorQuery = [question, ...plan.keywords].filter(Boolean).join('\n')
+    const rows = await withTimeout(
+      vectorBuscarChunksDoNotebook(vectorQuery, notebookId, plan.depth === 'deep' ? 16 : 10),
+      2_500,
+      'Busca vetorial demorou; usando fallback local.',
+    )
+    const blocks = rows
+      .map((row) => {
+        const text = typeof row.metadata.chunkText === 'string' ? row.metadata.chunkText : ''
+        return `[${chunkReference(row)} | score ${row.score.toFixed(3)}]\n${text.slice(0, 1800)}`
+      })
+      .filter((block) => block.trim())
+    setChatStep(message, 'Índice vetorial', blocks.length ? 'done' : 'warn', `${blocks.length} trecho(s).`)
+    if (blocks.length) return `${fallback}\n\n---\n\n${blocks.join('\n\n---\n\n')}`.slice(0, 18000)
+  } catch (e) {
+    setChatStep(message, 'Índice vetorial', 'warn', e instanceof Error ? e.message : String(e))
+  }
+  if (plan.depth === 'deep') {
+    setChatStep(message, 'Busca local profunda', 'running', 'Procurando linhas no texto extraído limitado.')
+    await nextTick()
+    const deep = readySources.value
+      .slice(0, 8)
+      .map((source) => {
+        const lines = matchingLocalLines(source.llmMarkdown || source.extractedText, plan, 12)
+        return lines.length ? `[${source.fileName} | texto extraído]\n${lines.map((line) => `- ${line}`).join('\n')}` : ''
+      })
+      .filter(Boolean)
+      .join('\n\n---\n\n')
+    setChatStep(message, 'Busca local profunda', deep ? 'done' : 'warn', deep ? 'Trechos encontrados.' : 'Sem linhas adicionais.')
+    return `${fallback}\n\n---\n\n${deep}`.slice(0, 18000)
+  }
+  return fallback
+}
+
+function requestedMissingNotebooks(question: string): string[] {
+  const wanted = ['sabesp', 'sbsp3', 'copasa', 'csmg3']
+  const q = question.toLowerCase()
+  const missing: string[] = []
+  for (const key of wanted) {
+    if (!q.includes(key)) continue
+    const exists = notebook.notebooks.some((n) =>
+      [n.title, n.ticker ?? ''].some((value) => value.toLowerCase().includes(key)),
+    )
+    if (!exists) missing.push(key.toUpperCase())
+  }
+  return [...new Set(missing)]
+}
+
+function buildChatPrompt(question: string, evidence: string, critique = '', plan?: ChatPlan): string {
+  const active = selectedNotebook.value
+  const missing = requestedMissingNotebooks(question)
+  return [
+    'Você é um harness de análise financeira para investidores, operando sobre um notebook de RI.',
+    'Responda em português, com objetividade, usando primeiro dados estruturados e depois evidências vetoriais.',
+    'Escopo padrão: use apenas o notebook ativo. Compare com outros notebooks somente se o usuário pedir explicitamente.',
+    'Se o usuário pedir empresa/notebook que não existe, peça para adicionar os PDFs desse notebook.',
+    'Não invente números. Se faltar dado, diga exatamente o que falta.',
+    'Para indicadores calculáveis, explique a fórmula e cite as fontes/trechos disponíveis.',
+    'Não exponha raciocínio interno oculto; mostre apenas etapas e justificativas auditáveis.',
+    critique ? `Crítica da tentativa anterior: ${critique}` : null,
+    '',
+    `Notebook ativo: ${active ? notebookDisplayTitle(active) : 'nenhum'}`,
+    missing.length ? `Notebooks mencionados mas ausentes: ${missing.join(', ')}` : null,
+    plan ? `Plano de busca: ${plan.intent}; campos=${plan.fields.join(', ') || 'n/a'}; profundidade=${plan.depth}; termos=${plan.keywords.join(', ')}` : null,
+    '',
+    'Dados estruturados do banco:',
+    latestSnapshotContext(),
+    '',
+    'Evidências vetoriais/local:',
+    evidence || 'Sem evidências recuperadas.',
+    '',
+    'Histórico recente:',
+    recentChatHistory() || 'Sem histórico.',
+    '',
+    `Pergunta do usuário: ${question}`,
+  ].filter(Boolean).join('\n')
+}
+
+function answerFromStructuredSnapshot(question: string, plan?: ChatPlan): string | null {
+  const snapshot = fundamentalStore.latestForNotebook(notebook.activeNotebookId)
+  if (!snapshot) return null
+  const q = normalizeQuestionText(question)
+  const fieldHints: Array<[string, string[]]> = [
+    ['marg_ebit', ['margem ebit', 'marg ebit', 'margim ebit', 'margem evit', 'margim evit', 'ebit margin']],
+    ['marg_bruta', ['margem bruta', 'marg bruta', 'margim bruta']],
+    ['marg_liquida', ['margem liquida', 'marg liquida', 'margim liquida']],
+    ['roe', ['roe']],
+    ['roic', ['roic']],
+    ['receita_liquida_12m', ['receita liquida']],
+    ['ebit_12m', ['ebit', 'evit']],
+    ['lucro_liquido_12m', ['lucro liquido']],
+  ]
+  const plannedKey = plan?.fields.find((field) => snapshot.fields.some((item) => item.key === field))
+  const key = plannedKey ?? fieldHints.find(([, hints]) => hints.some((hint) => q.includes(hint)))?.[0]
+  if (!key) return null
+  const field = snapshot.fields.find((item) => item.key === key)
+  if (!field || isMissingFundamentalValue(field.value)) return null
+  const requestedPeriod = q.match(/\b(?:q|t)([1-4])\s*(?:de\s*)?(20\d{2}|\d{2})\b/i)
+  const periodNote = requestedPeriod
+    ? `\n\nObservação: o snapshot atual guarda um valor consolidado/mais recente para esse campo. Ainda não há série temporal por trimestre armazenada para comparar exatamente ${requestedPeriod[0]}.`
+    : ''
+  const evidence = [field.source_file, field.source_page ? `pág. ${field.source_page}` : null, field.source_line]
+    .filter(Boolean)
+    .join(' | ')
+  return [
+    `No notebook ativo (${selectedNotebook.value ? notebookDisplayTitle(selectedNotebook.value) : 'caderno atual'}), **${field.label}** está em **${field.value}**.`,
+    evidence ? `Fonte: ${evidence}.` : null,
+    field.calculation ? `Cálculo/critério: ${field.calculation}` : null,
+    periodNote,
+  ].filter(Boolean).join('\n\n')
+}
+
+async function scoreChatAnswer(question: string, answer: string, context: string, message: ChatMessage): Promise<{ score: number; critique: string }> {
+  const model = llmRuntime.chatModelName.trim()
+  if (!model || !llmRuntime.effectiveServerBase || !answer.trim()) return { score: answer.trim() ? 0.7 : 0, critique: '' }
+  setChatStep(message, 'Pontuando resposta', 'running', 'Verificando cobertura, fontes e falta de invenção.')
+  try {
+    const out = await chatCompletion({
+      baseUrl: llmRuntime.effectiveServerBase,
+      apiToken: llmRuntime.llmApiToken,
+      model,
+      temperature: 0,
+      timeoutMs: 45_000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            'Avalie a resposta para uma pergunta financeira com base no contexto.',
+            'Responda somente JSON: {"score":0.0,"critique":"..."}',
+            'Critérios: responde a pergunta, cita evidências, não inventa números, declara faltas.',
+            `Pergunta: ${question}`,
+            `Contexto: ${context.slice(0, 9000)}`,
+            `Resposta: ${answer.slice(0, 5000)}`,
+          ].join('\n\n'),
+        },
+      ],
+    })
+    const parsed = extractJsonObject(out.text) as { score?: unknown; critique?: unknown }
+    const score = typeof parsed.score === 'number' ? parsed.score : Number(parsed.score)
+    const critique = typeof parsed.critique === 'string' ? parsed.critique : ''
+    const safeScore = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0.65
+    setChatStep(message, 'Pontuando resposta', safeScore >= 0.72 ? 'done' : 'warn', `score ${safeScore.toFixed(2)}`)
+    return { score: safeScore, critique }
+  } catch (e) {
+    setChatStep(message, 'Pontuando resposta', 'warn', e instanceof Error ? e.message : String(e))
+    return { score: 0.7, critique: '' }
+  }
+}
+
+async function runChatHarness(question: string, message: ChatMessage) {
+  const model = llmRuntime.chatModelName.trim()
+  if (!readySources.value.length && !fundamentalStore.latestForNotebook(notebook.activeNotebookId)) {
+    message.text = 'Adicione uma fonte ou gere um snapshot fundamentalista primeiro para eu responder com base no caderno.'
+    message.status = 'done'
+    return
+  }
+
+  message.status = 'thinking'
+  setChatStep(message, 'Pensando', 'running', 'Montando plano do notebook ativo.')
+  await nextTick()
+  const plan = await planChatQuery(question, message)
+  let evidence = ''
+  try {
+    const structuredAnswer = answerFromStructuredSnapshot(question, plan)
+    if (structuredAnswer) {
+      setChatStep(message, 'Banco estruturado', 'done', 'Resposta encontrada no snapshot fundamentalista.')
+      message.text = structuredAnswer
+      message.score = 0.92
+      message.status = 'done'
+      return
+    }
+    if (!model || !llmRuntime.effectiveServerBase) {
+      message.text = 'Conecte um modelo LLM para o chat. Eu já tentei o banco estruturado, mas esta pergunta precisa de redação/consulta semântica.'
+      message.status = 'error'
+      return
+    }
+    evidence = await withTimeout(
+      collectChatEvidence(question, message, plan),
+      plan.depth === 'deep' ? 7_500 : 4_500,
+      'Preparação de contexto demorou; seguindo com snapshot e contexto mínimo.',
+    )
+  } catch (e) {
+    setChatStep(message, 'Contexto local', 'warn', e instanceof Error ? e.message : String(e))
+    evidence = ''
+  }
+  setChatStep(message, 'Pensando', 'done', 'Contexto preparado.')
+
+  let critique = ''
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const prompt = buildChatPrompt(question, evidence, critique, plan)
+    setChatStep(message, `Gerando resposta ${attempt}/2`, 'running', `~${estimatePromptTokens(prompt)} tokens de contexto.`)
+    message.status = 'streaming'
+    message.text = attempt === 1 ? '' : `${message.text}\n\n---\n\nRevisando resposta com score baixo...\n\n`
+    let lastPartialAt = 0
+    try {
+      const out = await chatCompletion({
+        baseUrl: llmRuntime.effectiveServerBase,
+        apiToken: llmRuntime.llmApiToken,
+        model,
+        temperature: 0.1,
+        timeoutMs: attempt === 1 ? 120_000 : 180_000,
+        onTextDelta: (_delta, text) => {
+          const now = Date.now()
+          if (now - lastPartialAt < 120) return
+          lastPartialAt = now
+          message.text = text
+        },
+        messages: [{ role: 'user', content: prompt }],
+      })
+      message.text = out.text.trim()
+      setChatStep(message, `Gerando resposta ${attempt}/2`, 'done', `${message.text.length} caracteres.`)
+    } catch (e) {
+      setChatStep(message, `Gerando resposta ${attempt}/2`, 'warn', e instanceof Error ? e.message : String(e))
+      if (attempt === 1) continue
+      message.text = message.text || `Não consegui concluir a resposta do modelo. Detalhe: ${e instanceof Error ? e.message : String(e)}`
+      message.status = 'error'
+      return
+    }
+
+    const scored = await scoreChatAnswer(question, message.text, `${latestSnapshotContext()}\n\n${evidence}`, message)
+    message.score = scored.score
+    if (scored.score >= 0.72 || attempt === 2) {
+      message.status = 'done'
+      return
+    }
+    critique = scored.critique || 'Resposta com baixa cobertura; refaça citando dados, faltas e fontes.'
+  }
+}
+
+async function submitChat() {
   const text = chatDraft.value.trim()
-  if (!text) return
-  chatMessages.value.push({ role: 'user', text })
-  chatMessages.value.push({
+  if (!text || chatRunning.value) return
+  chatMessages.value.push({ id: crypto.randomUUID(), role: 'user', text })
+  const assistant: ChatMessage = {
+    id: crypto.randomUUID(),
     role: 'assistant',
-    text:
-      readySources.value.length > 0
-        ? 'Chat com RAG entra aqui: vou usar as fontes selecionadas, o índice vetorial e o modelo conectado para responder com citações.'
-        : 'Adicione uma fonte primeiro para eu responder com base nos documentos do caderno.',
-  })
+    text: '',
+    status: 'thinking',
+    steps: [{ label: 'Pensando', status: 'running', detail: 'Iniciando harness financeiro.' }],
+  }
+  chatMessages.value.push(assistant)
   chatDraft.value = ''
+  chatRunning.value = true
+  try {
+    await runChatHarness(text, assistant)
+  } catch (e) {
+    assistant.status = 'error'
+    assistant.text = `Falha no harness antes de concluir a resposta: ${e instanceof Error ? e.message : String(e)}`
+    setChatStep(assistant, 'Erro', 'error', e instanceof Error ? e.message : String(e))
+  } finally {
+    chatRunning.value = false
+  }
 }
 
 function riskQueries(): string[] {
@@ -1573,14 +2008,39 @@ async function generateRiskReport() {
       <section class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4">
           <div>
-            <h2 class="text-sm font-semibold text-slate-950">
-              {{ activeStudioReport ? activeStudioReport.title : activeFundamentalSnapshot ? activeFundamentalSnapshot.title : store.selected ? 'Documento' : 'Conversa' }}
-            </h2>
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-semibold text-slate-950">
+                {{ activeStudioReport ? activeStudioReport.title : activeFundamentalSnapshot ? activeFundamentalSnapshot.title : store.selected ? 'Documento' : 'OpenYield' }}
+              </h2>
+              <span
+                v-if="!activeStudioReport && !activeFundamentalSnapshot && !store.selected"
+                tabindex="0"
+                class="group relative flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-bold text-slate-500"
+                aria-label="OpenYield é um harness de finanças e mercado de capitais."
+              >
+                ?
+                <span
+                  class="pointer-events-none absolute left-0 top-6 z-30 hidden w-80 whitespace-normal rounded-lg border border-slate-200 bg-slate-950 p-3 text-left text-[11px] font-normal leading-relaxed text-white shadow-xl group-hover:block group-focus:block"
+                >
+                  OpenYield é um harness de finanças e mercado de capitais. Ele usa PDFs do notebook, snapshots fundamentalistas, relatórios, índice vetorial e LLM local para responder perguntas, comparar períodos, explicar cálculos, pedir fontes faltantes, gerar relatórios e auditar respostas com scoring.
+                </span>
+              </span>
+            </div>
             <p class="text-[11px] text-slate-500">
               {{ activeStudioReport?.subtitle ?? (activeFundamentalSnapshot ? `${activeFundamentalSnapshot.ticker ?? selectedNotebook?.ticker ?? 'Ticker'} · ${activeFundamentalSnapshot.status}` : store.selected?.fileName ?? `${readySources.length} fonte(s) neste caderno`) }}
             </p>
           </div>
-          <div v-if="!activeStudioReport && !activeFundamentalSnapshot && store.selected?.status === 'ready'" class="flex rounded-full bg-slate-100 p-1 text-xs font-semibold">
+          <button
+            v-if="activeStudioReport || activeFundamentalSnapshot"
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-lg leading-none text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+            title="Fechar e voltar para OpenYield"
+            aria-label="Fechar visualização"
+            @click="activeStudioReportId = null; activeFundamentalSnapshotId = null; store.select(null)"
+          >
+            ×
+          </button>
+          <div v-else-if="store.selected?.status === 'ready'" class="flex rounded-full bg-slate-100 p-1 text-xs font-semibold">
             <button
               type="button"
               class="rounded-full px-3 py-1 transition"
@@ -1776,14 +2236,52 @@ async function generateRiskReport() {
                 <div
                   v-for="(m, idx) in chatMessages"
                   :key="idx"
-                  class="max-w-[82%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm"
+                  class="max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm"
                   :class="
                     m.role === 'user'
                       ? 'ml-auto bg-slate-950 text-white'
                       : 'mr-auto border border-slate-200 bg-white text-slate-700'
                   "
                 >
-                  {{ m.text }}
+                  <template v-if="m.role === 'user'">
+                    {{ m.text }}
+                  </template>
+                  <template v-else>
+                    <div v-if="m.steps?.length" class="mb-3 space-y-1 border-b border-slate-100 pb-3">
+                      <div
+                        v-for="step in m.steps"
+                        :key="step.label"
+                        class="flex items-start gap-2 text-xs"
+                        :class="
+                          step.status === 'error'
+                            ? 'text-rose-600'
+                            : step.status === 'warn'
+                              ? 'text-amber-600'
+                              : step.status === 'running'
+                                ? 'text-indigo-600'
+                                : 'text-slate-500'
+                        "
+                      >
+                        <span
+                          class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full"
+                          :class="step.status === 'running' ? 'animate-pulse bg-indigo-500' : 'bg-current'"
+                        />
+                        <span>
+                          <span class="font-semibold">{{ step.label }}</span>
+                          <span v-if="step.detail"> · {{ step.detail }}</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      v-if="m.text"
+                      class="report-markdown-body"
+                      v-html="markdownToSanitizedHtml(m.text)"
+                    />
+                    <p v-else class="text-sm text-slate-500">Pensando...</p>
+                    <p v-if="m.score != null" class="mt-3 text-[11px] font-semibold text-slate-400">
+                      Score da resposta: {{ Math.round(m.score * 100) }}%
+                    </p>
+                  </template>
                 </div>
               </div>
             </div>
@@ -1794,16 +2292,19 @@ async function generateRiskReport() {
               <input
                 v-model="chatDraft"
                 type="text"
+                :disabled="chatRunning"
                 class="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                placeholder="Pergunte sobre resultados, riscos, guidance, dividendos..."
+                :placeholder="chatRunning ? 'Processando com RAG e scoring...' : 'Pergunte sobre resultados, riscos, guidance, dividendos...'"
               />
               <span class="hidden text-xs text-slate-400 sm:inline">{{ readySources.length }} fonte(s)</span>
               <button
                 type="submit"
+                :disabled="chatRunning"
                 class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white transition hover:bg-indigo-700"
+                :class="chatRunning ? 'cursor-progress opacity-60' : ''"
                 aria-label="Enviar pergunta"
               >
-                →
+                {{ chatRunning ? '…' : '→' }}
               </button>
             </div>
           </form>
