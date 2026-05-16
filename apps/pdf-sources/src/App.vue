@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { NotebookPage } from '#pages'
+import { AppShellLayout } from '#widgets/app-shell'
 </script>
 
 <template>
-  <NotebookPage />
+  <AppShellLayout />
 </template>

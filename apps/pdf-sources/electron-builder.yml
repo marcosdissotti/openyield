@@ -9,10 +9,13 @@ copyright: Copyright © 2026
 directories:
   output: release
 
+# Não embutir resources/ (llama-server local): symlinks para fora do appDir
+# fazem o electron-builder fazer stat no destino (ex.: path antigo → ENOENT).
 files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  - "!resources{,/**/*}"
 
 asar: true
 

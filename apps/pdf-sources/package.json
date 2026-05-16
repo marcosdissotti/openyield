@@ -10,9 +10,10 @@
     "dev": "vite",
     "dev:web": "VITE_WEB_ONLY=1 vite",
     "build": "vue-tsc -b && vite build",
-    "dist:electron:win": "npm run build && electron-builder --win portable --x64",
-    "dist:electron:linux": "npm run build && electron-builder --linux AppImage",
-    "dist:electron:mac": "npm run build && electron-builder --mac dmg",
+    "clean:pack": "rm -rf dist dist-electron release",
+    "dist:electron:win": "npm run clean:pack && npm run build && electron-builder --win portable --x64",
+    "dist:electron:linux": "npm run clean:pack && npm run build && electron-builder --linux AppImage",
+    "dist:electron:mac": "npm run clean:pack && npm run build && electron-builder --mac dmg",
     "test": "npm run gen:fixture && vitest run",
     "gen:fixture": "node scripts/gen-pdf-fixture.mjs",
     "cypress:open": "cypress open",
@@ -21,6 +22,7 @@
     "e2e:cypress": "start-server-and-test dev:web http://127.0.0.1:5173 cypress:run"
   },
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "chart.js": "^4.5.1",
     "dompurify": "^3.4.3",
     "marked": "^18.0.3",
@@ -31,6 +33,7 @@
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/dompurify": "^3.0.5",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-vue": "^5.2.1",

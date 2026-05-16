@@ -87,6 +87,29 @@ Dez/22 100 0 0 Dez/23 62 38 0 Dez/24 40 46 13 Dez/25 27 55 19 Mar/26 21 60 19`
     expect(cfg!.datasets[2]!.label).toBe('Geração Própria')
   })
 
+  it('preview map inclui companionTables quando há gráfico e tabela de layout na mesma página', () => {
+    const rows = ['Métrica\tA\tB']
+    for (let i = 0; i < 11; i++) {
+      rows.push(`Ligações (1.000 unidades) descr ${i}\t${1000 + i}\t${2000 + i}`)
+    }
+    const md = `## Página 9 — texto extraído
+
+1.2. Inadimplência
+Mar/24 3,03 Dez/24 2,92 Mar/25 2,86
+
+## Página 9 — layout (tabela aproximada)
+
+\`\`\`tsv
+${rows.join('\n')}
+\`\`\`
+`
+    const vis = buildPagePreviewVisualMap(md).get(9)
+    expect(vis?.mode).toBe('chart')
+    if (vis?.mode === 'chart') {
+      expect(vis.companionTables?.length).toBeGreaterThan(0)
+    }
+  })
+
   it('preview map uses table when layout is not chartable', () => {
     const rows = ['Métrica\tA\tB']
     for (let i = 0; i < 11; i++) {

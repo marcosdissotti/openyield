@@ -17,6 +17,16 @@ export interface BuildLlmDocumentOptions {
    * mas gráficos vectoriais noutras páginas — sem isto, só páginas com imagem embutida recebem OCR.
    */
   ocrAllPages?: boolean
+  /**
+   * Quando `true` (defeito no browser), texto + OCR em paralelo via Web Workers
+   * (partições do PDF). Desativar em testes ou se `renderPage` / `recognizeImage` forem custom.
+   */
+  useWorkerPool?: boolean
+  /**
+   * Número de workers Web em paralelo para texto + OCR (1–12). Por defeito: metade dos núcleos,
+   * limitado a 6. Aumentar pode acelerar PDFs grandes em máquinas com muitos núcleos e RAM.
+   */
+  extractParallelism?: number
 }
 
 export interface BuildLlmDocumentResult {
@@ -24,4 +34,9 @@ export interface BuildLlmDocumentResult {
   rawPlainText: string
   /** Documento Markdown para prompts / separador “Markdown (LLM)” */
   llmMarkdown: string
+  /**
+   * Páginas (1-based) com **imagem raster embutida** no PDF (XObject/inline).
+   * Usado com o mapa layout/OCR para escolher candidatos à visão LLM (gráfico em imagem vs. só tabela).
+   */
+  bitmapPageNumbers: number[]
 }

@@ -25,8 +25,28 @@ describe('llamaRuntimeApi', () => {
       model: 'm',
       messages: [{ role: 'user', content: 'hi' }],
       timeoutMs: 5000,
+      temperature: 0,
     })
     expect(out.text).toBe('{"a":1}')
+  })
+
+  it('chatCompletion inclui temperature no corpo quando passada', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { temperature?: number }
+      expect(body.temperature).toBe(0)
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'x' } }] }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    await chatCompletion({
+      baseUrl: 'http://x',
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0,
+    })
+    expect(fetchMock).toHaveBeenCalled()
   })
 
   it('listOpenAiCompatibleModels parses data[].id', async () => {
@@ -71,3 +91,4 @@ describe('llamaRuntimeApi', () => {
       }),
     ).rejects.toThrow(/Start Server/)
   })
+})
