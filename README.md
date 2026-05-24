@@ -197,15 +197,17 @@ npm run test:openyield
 
 ## Releases
 
-Cada push para `main` dispara o workflow **Release OpenYield** (`.github/workflows/release-openyield.yml`):
+O workflow **Release OpenYield** corre em cada push para `main`, mas **só gera `.exe` e publica release** quando a `version` em `apps/openyield/package.json` é **maior** que a última release no GitHub.
 
-1. Build Windows portable no GitHub Actions
-2. Cria release com tag `v{versão}-build.{n}`
-3. Anexa o `.exe` para download
+Para publicar uma nova build:
+
+1. Incremente `"version"` em `apps/openyield/package.json` (ex.: `0.0.1` → `0.0.2`)
+2. Commit + push para `main`
+3. A release aparece com tag `v{versão}` (ex.: `v0.0.2`)
 
 Releases: [github.com/marcosdissotti/openyield/releases](https://github.com/marcosdissotti/openyield/releases)
 
-Versão do app: `apps/openyield/package.json` → campo `version`.
+A versão também aparece na barra de título do app (`OpenYield — 0.0.1`).
 
 ---
 

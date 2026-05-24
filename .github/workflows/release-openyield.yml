@@ -6,16 +6,72 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-openyield-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.gate.outputs.should_release }}
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare package version with latest GitHub release
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          CURRENT=$(node -p "require('./apps/openyield/package.json').version")
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          LATEST=$(
+            gh release list --repo "${{ github.repository }}" --limit 100 \
+              --json tagName --jq '.[].tagName' \
+            | sed -E 's/^v//; s/-build.*//' \
+            | sort -V \
+            | tail -n1
+          )
+
+          if [ -z "$LATEST" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Sem releases anteriores. A publicar v${CURRENT}."
+            exit 0
+          fi
+
+          SHOULD_RELEASE=$(CURRENT="$CURRENT" LATEST="$LATEST" node -e "
+            const current = process.env.CURRENT.split('.').map((n) => Number(n) || 0)
+            const latest = process.env.LATEST.split('.').map((n) => Number(n) || 0)
+            for (let i = 0; i < Math.max(current.length, latest.length); i += 1) {
+              const c = current[i] ?? 0
+              const l = latest[i] ?? 0
+              if (c > l) { process.stdout.write('true'); process.exit(0) }
+              if (c < l) { process.stdout.write('false'); process.exit(0) }
+            }
+            process.stdout.write('false')
+          ")
+
+          if [ "$SHOULD_RELEASE" = "true" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "v${CURRENT} > v${LATEST}. Build e release serão gerados."
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "v${CURRENT} <= v${LATEST}. Build ignorado (incremente version em apps/openyield/package.json)."
+          fi
+
   build-windows:
+    needs: release-gate
+    if: needs.release-gate.outputs.should_release == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -30,13 +86,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Read app version
-        id: version
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./apps/openyield/package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Build Windows portable (.exe)
         run: npm run dist:electron:win:ci -w openyield
         env:
@@ -45,10 +94,10 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}-build.${{ github.run_number }}
-          name: OpenYield v${{ steps.version.outputs.version }} (build ${{ github.run_number }})
+          tag_name: v${{ needs.release-gate.outputs.version }}
+          name: OpenYield v${{ needs.release-gate.outputs.version }}
           body: |
-            Build automático do branch `main` (commit ${{ github.sha }}).
+            Release **v${{ needs.release-gate.outputs.version }}** (commit ${{ github.sha }}).
 
             **Windows:** descarregue o `.exe` portable abaixo.
           generate_release_notes: true
