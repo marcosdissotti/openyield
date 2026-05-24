@@ -1,4 +1,5 @@
 import { useLlmRuntimeStore } from '#entities/llm-runtime'
+import { useNotebookStore } from '#entities/notebook'
 import { useGrahamSnapshotStore } from '#entities/graham-snapshot/model/grahamSnapshotStore'
 import { useGrahamNumberSnapshotStore } from '#entities/graham-number-snapshot/model/grahamNumberSnapshotStore'
 import { bootstrapPdfWorkspace } from '#features/pdf-persistence/bootstrapWorkspace'
@@ -78,6 +79,7 @@ export interface WorkspacePackImportResult {
   fileName?: string
   mode?: WorkspacePackImportMode
   manifest?: OpenYieldPackManifest
+  activeNotebookId?: string | null
 }
 
 export async function exportWorkspacePack(payload: WorkspacePackExportPayload): Promise<WorkspacePackExportResult> {
@@ -103,10 +105,14 @@ export async function importWorkspacePack(mode: WorkspacePackImportMode): Promis
     fileName: raw.fileName,
     mode: raw.mode,
     manifest: raw.manifest as OpenYieldPackManifest | undefined,
+    activeNotebookId: raw.activeNotebookId ?? null,
   }
 }
 
-export async function applyImportedPackToApp(manifest: OpenYieldPackManifest | null | undefined): Promise<void> {
+export async function applyImportedPackToApp(
+  manifest: OpenYieldPackManifest | null | undefined,
+  activeNotebookId?: string | null,
+): Promise<void> {
   if (!manifest) return
 
   const llmStore = useLlmRuntimeStore()
@@ -114,6 +120,13 @@ export async function applyImportedPackToApp(manifest: OpenYieldPackManifest | n
   applyImportedLocalSnapshots(manifest.localSnapshots as Record<string, unknown> | null | undefined)
 
   await bootstrapPdfWorkspace()
+
+  if (activeNotebookId) {
+    const notebook = useNotebookStore()
+    if (notebook.notebooks.some((row) => row.id === activeNotebookId)) {
+      await notebook.setActiveNotebook(activeNotebookId)
+    }
+  }
 
   const graham = useGrahamSnapshotStore()
   graham.hydrateFromRows([])

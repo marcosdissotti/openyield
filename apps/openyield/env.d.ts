@@ -111,11 +111,13 @@ export interface OpenYieldElectronApi {
   }) => Promise<{ canceled: boolean; path?: string }>
   workspaceImportPack?: (payload: {
     mode: 'replace' | 'merge'
+    activeNotebookId?: string | null
   }) => Promise<{
     canceled: boolean
     fileName?: string
     mode?: 'replace' | 'merge'
     manifest?: Record<string, unknown>
+    activeNotebookId?: string | null
   }>
 }
 

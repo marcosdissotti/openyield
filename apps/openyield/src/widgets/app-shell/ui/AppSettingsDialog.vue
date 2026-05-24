@@ -21,7 +21,7 @@ type SettingsSection = 'data' | 'llm'
 const activeSection = ref<SettingsSection>('data')
 const includeLlmSettings = ref(true)
 const includeLocalSnapshots = ref(true)
-const importMode = ref<WorkspacePackImportMode>('merge')
+const importMode = ref<WorkspacePackImportMode>('replace')
 const exportBusy = ref(false)
 const importBusy = ref(false)
 const statusMessage = ref<string | null>(null)
@@ -89,7 +89,7 @@ async function onImport() {
       setStatus('Importação cancelada.', 'info')
       return
     }
-    await applyImportedPackToApp(result.manifest)
+    await applyImportedPackToApp(result.manifest, result.activeNotebookId)
     const modeLabel = result.mode === 'merge' ? 'mesclado' : 'substituído'
     setStatus(`Pacote "${result.fileName}" importado (${modeLabel}).`, 'success')
   } catch (err) {

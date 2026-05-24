@@ -74,6 +74,7 @@ export function registerWorkspacePackIpc(): void {
         fileName: path.basename(filePaths[0]),
         manifest: result.manifest,
         mode: result.mode,
+        activeNotebookId: result.activeNotebookId,
       }
     },
   )

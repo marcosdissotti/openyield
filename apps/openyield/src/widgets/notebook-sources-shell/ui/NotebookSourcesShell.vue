@@ -54,6 +54,7 @@ interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
+  thinkingText?: string
   status?: 'thinking' | 'streaming' | 'done' | 'error'
   steps?: ChatStep[]
   score?: number
@@ -66,8 +67,72 @@ interface ChatPlan {
   depth: 'fast' | 'deep'
 }
 
+function scrollChatToBottom() {
+  const el = chatScrollEl.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+function patchChatMessage(messageId: string, patch: Partial<ChatMessage>) {
+  const index = chatMessages.value.findIndex((message) => message.id === messageId)
+  if (index < 0) return
+  const current = chatMessages.value[index]!
+  chatMessages.value[index] = {
+    ...current,
+    ...patch,
+    steps: patch.steps ?? current.steps,
+  }
+  void nextTick(scrollChatToBottom)
+}
+
+function parseThinkTagsInStream(raw: string): { thinkingText: string; text: string } {
+  const closed = raw.match(/<(?:think|thinking|redacted_thinking|reasoning)>([\s\S]*?)<\/(?:think|thinking|redacted_thinking|reasoning)>/i)
+  if (closed) {
+    return {
+      thinkingText: closed[1]?.trim() ?? '',
+      text: raw.replace(/<(?:think|thinking|redacted_thinking|reasoning)>[\s\S]*?<\/(?:think|thinking|redacted_thinking|reasoning)>/gi, '').trim(),
+    }
+  }
+  const open = raw.match(/<(?:think|thinking|redacted_thinking|reasoning)>([\s\S]*)$/i)
+  if (open) {
+    return {
+      thinkingText: open[1]?.trim() ?? '',
+      text: raw.slice(0, open.index).trim(),
+    }
+  }
+  return { thinkingText: '', text: raw }
+}
+
+function applyStreamDelta(messageId: string, contentDelta: string, reasoningDelta: string, contentSoFar: string, reasoningSoFar: string) {
+  let text = contentSoFar
+  let thinkingText = reasoningSoFar
+
+  if (contentDelta && !reasoningDelta) {
+    const parsed = parseThinkTagsInStream(contentSoFar)
+    if (parsed.thinkingText || /<(think|thinking|redacted_thinking|reasoning)>/i.test(contentSoFar)) {
+      text = parsed.text
+      thinkingText = thinkingText ? `${thinkingText}\n${parsed.thinkingText}`.trim() : parsed.thinkingText
+    }
+  }
+
+  patchChatMessage(messageId, {
+    text,
+    thinkingText: thinkingText || undefined,
+    status: 'streaming',
+  })
+}
+
 const chatMessages = ref<ChatMessage[]>([])
 const chatRunning = ref(false)
+const chatScrollEl = ref<HTMLElement | null>(null)
+
+watch(
+  chatMessages,
+  () => {
+    void nextTick(scrollChatToBottom)
+  },
+  { deep: true, flush: 'post' },
+)
 const activeStudioReportId = ref<string | null>(null)
 const activeFundamentalSnapshotId = ref<string | null>(null)
 const developerLogsVisible = ref(false)
@@ -422,8 +487,11 @@ function useStarterQuestion(text: string) {
   chatDraft.value = text
 }
 
-function setChatStep(message: ChatMessage, label: string, status: ChatStep['status'], detail?: string) {
-  const steps = message.steps ?? (message.steps = [])
+function setChatStep(messageId: string, label: string, status: ChatStep['status'], detail?: string) {
+  const index = chatMessages.value.findIndex((message) => message.id === messageId)
+  if (index < 0) return
+  const message = chatMessages.value[index]!
+  const steps = (message.steps ?? []).map((step) => ({ ...step }))
   const existing = steps.find((step) => step.label === label)
   if (existing) {
     existing.status = status
@@ -431,6 +499,7 @@ function setChatStep(message: ChatMessage, label: string, status: ChatStep['stat
   } else {
     steps.push({ label, status, detail })
   }
+  patchChatMessage(messageId, { steps })
 }
 
 function latestSnapshotContext(): string {
@@ -497,11 +566,11 @@ function deterministicChatPlan(question: string): ChatPlan {
   }
 }
 
-async function planChatQuery(question: string, message: ChatMessage): Promise<ChatPlan> {
+async function planChatQuery(question: string, messageId: string): Promise<ChatPlan> {
   const fallback = deterministicChatPlan(question)
   const model = llmRuntime.chatModelName.trim()
   if (!model || !llmRuntime.effectiveServerBase) return fallback
-  setChatStep(message, 'Planejando busca', 'running', 'Identificando campo, período e ferramenta mais barata.')
+  setChatStep(messageId, 'Planejando busca', 'running', 'Identificando campo, período e ferramenta mais barata.')
   try {
     const out = await withTimeout(
       chatCompletion({
@@ -536,10 +605,10 @@ async function planChatQuery(question: string, message: ChatMessage): Promise<Ch
       keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords.map(String) : fallback.keywords,
       depth: parsed.depth === 'deep' || parsed.depth === 'fast' ? parsed.depth : fallback.depth,
     }
-    setChatStep(message, 'Planejando busca', 'done', `${plan.intent}; ${plan.keywords.slice(0, 4).join(', ')}`)
+    setChatStep(messageId, 'Planejando busca', 'done', `${plan.intent}; ${plan.keywords.slice(0, 4).join(', ')}`)
     return plan
   } catch (e) {
-    setChatStep(message, 'Planejando busca', 'warn', e instanceof Error ? e.message : String(e))
+    setChatStep(messageId, 'Planejando busca', 'warn', e instanceof Error ? e.message : String(e))
     return fallback
   }
 }
@@ -579,18 +648,18 @@ function localChatEvidence(plan: ChatPlan): string {
     .join('\n\n---\n\n')
 }
 
-async function collectChatEvidence(question: string, message: ChatMessage, plan: ChatPlan): Promise<string> {
+async function collectChatEvidence(question: string, messageId: string, plan: ChatPlan): Promise<string> {
   const notebookId = notebook.activeNotebookId
   if (!notebookId) return ''
-  setChatStep(message, 'Resumos internos', 'running', 'Lendo cabeçalhos persistidos dos PDFs.')
+  setChatStep(messageId, 'Resumos internos', 'running', 'Lendo cabeçalhos persistidos dos PDFs.')
   await nextTick()
   const fallback = localChatEvidence(plan)
-  setChatStep(message, 'Resumos internos', fallback.trim() ? 'done' : 'warn', fallback.trim() ? 'Pronto.' : 'Sem resumo local.')
+  setChatStep(messageId, 'Resumos internos', fallback.trim() ? 'done' : 'warn', fallback.trim() ? 'Pronto.' : 'Sem resumo local.')
   if (!window.openYieldElectron?.vectorBuscarChunksNotebook) {
-    setChatStep(message, 'Índice vetorial', 'warn', 'Indisponível; usando fallback local.')
+    setChatStep(messageId, 'Índice vetorial', 'warn', 'Indisponível; usando fallback local.')
     return fallback
   }
-  setChatStep(message, 'Índice vetorial', 'running', 'Consulta curta; fallback local já preparado.')
+  setChatStep(messageId, 'Índice vetorial', 'running', 'Consulta curta; fallback local já preparado.')
   try {
     const vectorQuery = [question, ...plan.keywords].filter(Boolean).join('\n')
     const rows = await withTimeout(
@@ -604,13 +673,13 @@ async function collectChatEvidence(question: string, message: ChatMessage, plan:
         return `[${chunkReference(row)} | score ${row.score.toFixed(3)}]\n${text.slice(0, 1800)}`
       })
       .filter((block) => block.trim())
-    setChatStep(message, 'Índice vetorial', blocks.length ? 'done' : 'warn', `${blocks.length} trecho(s).`)
+    setChatStep(messageId, 'Índice vetorial', blocks.length ? 'done' : 'warn', `${blocks.length} trecho(s).`)
     if (blocks.length) return `${fallback}\n\n---\n\n${blocks.join('\n\n---\n\n')}`.slice(0, 18000)
   } catch (e) {
-    setChatStep(message, 'Índice vetorial', 'warn', e instanceof Error ? e.message : String(e))
+    setChatStep(messageId, 'Índice vetorial', 'warn', e instanceof Error ? e.message : String(e))
   }
   if (plan.depth === 'deep') {
-    setChatStep(message, 'Busca local profunda', 'running', 'Procurando linhas no texto extraído limitado.')
+    setChatStep(messageId, 'Busca local profunda', 'running', 'Procurando linhas no texto extraído limitado.')
     await nextTick()
     const deep = readySources.value
       .slice(0, 8)
@@ -620,7 +689,7 @@ async function collectChatEvidence(question: string, message: ChatMessage, plan:
       })
       .filter(Boolean)
       .join('\n\n---\n\n')
-    setChatStep(message, 'Busca local profunda', deep ? 'done' : 'warn', deep ? 'Trechos encontrados.' : 'Sem linhas adicionais.')
+    setChatStep(messageId, 'Busca local profunda', deep ? 'done' : 'warn', deep ? 'Trechos encontrados.' : 'Sem linhas adicionais.')
     return `${fallback}\n\n---\n\n${deep}`.slice(0, 18000)
   }
   return fallback
@@ -704,10 +773,10 @@ function answerFromStructuredSnapshot(question: string, plan?: ChatPlan): string
   ].filter(Boolean).join('\n\n')
 }
 
-async function scoreChatAnswer(question: string, answer: string, context: string, message: ChatMessage): Promise<{ score: number; critique: string }> {
+async function scoreChatAnswer(question: string, answer: string, context: string, messageId: string): Promise<{ score: number; critique: string }> {
   const model = llmRuntime.chatModelName.trim()
   if (!model || !llmRuntime.effectiveServerBase || !answer.trim()) return { score: answer.trim() ? 0.7 : 0, critique: '' }
-  setChatStep(message, 'Pontuando resposta', 'running', 'Verificando cobertura, fontes e falta de invenção.')
+  setChatStep(messageId, 'Pontuando resposta', 'running', 'Verificando cobertura, fontes e falta de invenção.')
   try {
     const out = await chatCompletion({
       baseUrl: llmRuntime.effectiveServerBase,
@@ -733,59 +802,65 @@ async function scoreChatAnswer(question: string, answer: string, context: string
     const score = typeof parsed.score === 'number' ? parsed.score : Number(parsed.score)
     const critique = typeof parsed.critique === 'string' ? parsed.critique : ''
     const safeScore = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0.65
-    setChatStep(message, 'Pontuando resposta', safeScore >= 0.72 ? 'done' : 'warn', `score ${safeScore.toFixed(2)}`)
+    setChatStep(messageId, 'Pontuando resposta', safeScore >= 0.72 ? 'done' : 'warn', `score ${safeScore.toFixed(2)}`)
     return { score: safeScore, critique }
   } catch (e) {
-    setChatStep(message, 'Pontuando resposta', 'warn', e instanceof Error ? e.message : String(e))
+    setChatStep(messageId, 'Pontuando resposta', 'warn', e instanceof Error ? e.message : String(e))
     return { score: 0.7, critique: '' }
   }
 }
 
-async function runChatHarness(question: string, message: ChatMessage) {
+async function runChatHarness(question: string, messageId: string) {
   const model = llmRuntime.chatModelName.trim()
   if (!readySources.value.length && !fundamentalStore.latestForNotebook(notebook.activeNotebookId)) {
-    message.text = 'Adicione uma fonte ou gere um snapshot fundamentalista primeiro para eu responder com base no caderno.'
-    message.status = 'done'
+    patchChatMessage(messageId, {
+      text: 'Adicione uma fonte ou gere um snapshot fundamentalista primeiro para eu responder com base no caderno.',
+      status: 'done',
+    })
     return
   }
 
-  message.status = 'thinking'
-  setChatStep(message, 'Pensando', 'running', 'Montando plano do notebook ativo.')
-  await nextTick()
-  const plan = await planChatQuery(question, message)
+  patchChatMessage(messageId, { status: 'thinking' })
+  setChatStep(messageId, 'Pensando', 'running', 'Montando plano do notebook ativo.')
+  const plan = await planChatQuery(question, messageId)
   let evidence = ''
   try {
     const structuredAnswer = answerFromStructuredSnapshot(question, plan)
     if (structuredAnswer) {
-      setChatStep(message, 'Banco estruturado', 'done', 'Resposta encontrada no snapshot fundamentalista.')
-      message.text = structuredAnswer
-      message.score = 0.92
-      message.status = 'done'
+      setChatStep(messageId, 'Banco estruturado', 'done', 'Resposta encontrada no snapshot fundamentalista.')
+      patchChatMessage(messageId, { text: structuredAnswer, score: 0.92, status: 'done' })
       return
     }
     if (!model || !llmRuntime.effectiveServerBase) {
-      message.text = 'Conecte um modelo LLM para o chat. Eu já tentei o banco estruturado, mas esta pergunta precisa de redação/consulta semântica.'
-      message.status = 'error'
+      patchChatMessage(messageId, {
+        text: 'Conecte um modelo LLM para o chat. Eu já tentei o banco estruturado, mas esta pergunta precisa de redação/consulta semântica.',
+        status: 'error',
+      })
       return
     }
     evidence = await withTimeout(
-      collectChatEvidence(question, message, plan),
+      collectChatEvidence(question, messageId, plan),
       plan.depth === 'deep' ? 7_500 : 4_500,
       'Preparação de contexto demorou; seguindo com snapshot e contexto mínimo.',
     )
   } catch (e) {
-    setChatStep(message, 'Contexto local', 'warn', e instanceof Error ? e.message : String(e))
+    setChatStep(messageId, 'Contexto local', 'warn', e instanceof Error ? e.message : String(e))
     evidence = ''
   }
-  setChatStep(message, 'Pensando', 'done', 'Contexto preparado.')
+  setChatStep(messageId, 'Pensando', 'done', 'Contexto preparado.')
 
   let critique = ''
   for (let attempt = 1; attempt <= 2; attempt++) {
     const prompt = buildChatPrompt(question, evidence, critique, plan)
-    setChatStep(message, `Gerando resposta ${attempt}/2`, 'running', `~${estimatePromptTokens(prompt)} tokens de contexto.`)
-    message.status = 'streaming'
-    message.text = attempt === 1 ? '' : `${message.text}\n\n---\n\nRevisando resposta com score baixo...\n\n`
-    let lastPartialAt = 0
+    setChatStep(messageId, `Gerando resposta ${attempt}/2`, 'running', `~${estimatePromptTokens(prompt)} tokens de contexto.`)
+    const previousText =
+      attempt === 1
+        ? ''
+        : `${chatMessages.value.find((message) => message.id === messageId)?.text ?? ''}\n\n---\n\nRevisando resposta com score baixo...\n\n`
+    patchChatMessage(messageId, { status: 'streaming', text: previousText, thinkingText: undefined })
+
+    let contentSoFar = previousText
+    let reasoningSoFar = ''
     try {
       const out = await chatCompletion({
         baseUrl: llmRuntime.effectiveServerBase,
@@ -793,28 +868,44 @@ async function runChatHarness(question: string, message: ChatMessage) {
         model,
         temperature: 0.1,
         timeoutMs: attempt === 1 ? 120_000 : 180_000,
-        onTextDelta: (_delta, text) => {
-          const now = Date.now()
-          if (now - lastPartialAt < 120) return
-          lastPartialAt = now
-          message.text = text
+        onReasoningDelta: (_delta, reasoning) => {
+          reasoningSoFar = reasoning
+          applyStreamDelta(messageId, '', _delta, contentSoFar, reasoningSoFar)
+        },
+        onTextDelta: (delta, text) => {
+          contentSoFar = attempt === 1 ? text : `${previousText}${text}`
+          applyStreamDelta(messageId, delta, '', contentSoFar, reasoningSoFar)
         },
         messages: [{ role: 'user', content: prompt }],
       })
-      message.text = out.text.trim()
-      setChatStep(message, `Gerando resposta ${attempt}/2`, 'done', `${message.text.length} caracteres.`)
+      let finalText = out.text.trim()
+      let finalThinking = (out.reasoning ?? reasoningSoFar).trim()
+      const parsed = parseThinkTagsInStream(finalText)
+      if (parsed.thinkingText) {
+        finalThinking = finalThinking ? `${finalThinking}\n${parsed.thinkingText}`.trim() : parsed.thinkingText
+        finalText = parsed.text
+      }
+      patchChatMessage(messageId, {
+        text: finalText,
+        thinkingText: finalThinking || undefined,
+      })
+      setChatStep(messageId, `Gerando resposta ${attempt}/2`, 'done', `${finalText.length} caracteres.`)
     } catch (e) {
-      setChatStep(message, `Gerando resposta ${attempt}/2`, 'warn', e instanceof Error ? e.message : String(e))
+      setChatStep(messageId, `Gerando resposta ${attempt}/2`, 'warn', e instanceof Error ? e.message : String(e))
       if (attempt === 1) continue
-      message.text = message.text || `Não consegui concluir a resposta do modelo. Detalhe: ${e instanceof Error ? e.message : String(e)}`
-      message.status = 'error'
+      const current = chatMessages.value.find((message) => message.id === messageId)
+      patchChatMessage(messageId, {
+        text: current?.text || `Não consegui concluir a resposta do modelo. Detalhe: ${e instanceof Error ? e.message : String(e)}`,
+        status: 'error',
+      })
       return
     }
 
-    const scored = await scoreChatAnswer(question, message.text, `${latestSnapshotContext()}\n\n${evidence}`, message)
-    message.score = scored.score
+    const currentText = chatMessages.value.find((message) => message.id === messageId)?.text ?? ''
+    const scored = await scoreChatAnswer(question, currentText, `${latestSnapshotContext()}\n\n${evidence}`, messageId)
+    patchChatMessage(messageId, { score: scored.score })
     if (scored.score >= 0.72 || attempt === 2) {
-      message.status = 'done'
+      patchChatMessage(messageId, { status: 'done' })
       return
     }
     critique = scored.critique || 'Resposta com baixa cobertura; refaça citando dados, faltas e fontes.'
@@ -824,23 +915,31 @@ async function runChatHarness(question: string, message: ChatMessage) {
 async function submitChat() {
   const text = chatDraft.value.trim()
   if (!text || chatRunning.value) return
-  chatMessages.value.push({ id: crypto.randomUUID(), role: 'user', text })
-  const assistant: ChatMessage = {
-    id: crypto.randomUUID(),
-    role: 'assistant',
-    text: '',
-    status: 'thinking',
-    steps: [{ label: 'Pensando', status: 'running', detail: 'Iniciando harness financeiro.' }],
-  }
-  chatMessages.value.push(assistant)
+  const userMessageId = crypto.randomUUID()
+  const assistantId = crypto.randomUUID()
+  chatMessages.value = [
+    ...chatMessages.value,
+    { id: userMessageId, role: 'user', text },
+    {
+      id: assistantId,
+      role: 'assistant',
+      text: '',
+      status: 'thinking',
+      steps: [{ label: 'Pensando', status: 'running', detail: 'Iniciando harness financeiro.' }],
+    },
+  ]
   chatDraft.value = ''
   chatRunning.value = true
+  await nextTick()
+  scrollChatToBottom()
   try {
-    await runChatHarness(text, assistant)
+    await runChatHarness(text, assistantId)
   } catch (e) {
-    assistant.status = 'error'
-    assistant.text = `Falha no harness antes de concluir a resposta: ${e instanceof Error ? e.message : String(e)}`
-    setChatStep(assistant, 'Erro', 'error', e instanceof Error ? e.message : String(e))
+    patchChatMessage(assistantId, {
+      status: 'error',
+      text: `Falha no harness antes de concluir a resposta: ${e instanceof Error ? e.message : String(e)}`,
+    })
+    setChatStep(assistantId, 'Erro', 'error', e instanceof Error ? e.message : String(e))
   } finally {
     chatRunning.value = false
   }
@@ -2196,7 +2295,7 @@ async function generateRiskReport() {
         </template>
 
         <template v-else-if="!store.selected">
-          <ScrollPanel class="min-h-0 flex-1 overflow-auto bg-[#fbfcff]">
+          <div ref="chatScrollEl" class="min-h-0 flex-1 overflow-y-auto bg-[#fbfcff]">
             <div class="mx-auto flex w-full max-w-4xl flex-col gap-5 px-5 py-6">
               <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -2228,8 +2327,8 @@ async function generateRiskReport() {
 
               <div v-if="chatMessages.length" class="space-y-3">
                 <div
-                  v-for="(m, idx) in chatMessages"
-                  :key="idx"
+                  v-for="m in chatMessages"
+                  :key="m.id"
                   class="max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm"
                   :class="
                     m.role === 'user'
@@ -2266,12 +2365,24 @@ async function generateRiskReport() {
                         </span>
                       </div>
                     </div>
+                    <details
+                      v-if="m.thinkingText"
+                      class="mb-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2"
+                      :open="m.status === 'thinking' || m.status === 'streaming'"
+                    >
+                      <summary class="cursor-pointer text-xs font-semibold text-indigo-700">
+                        {{ m.status === 'done' ? 'Raciocínio do modelo' : 'A pensar…' }}
+                      </summary>
+                      <pre class="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-indigo-900/80">{{ m.thinkingText }}</pre>
+                    </details>
                     <div
                       v-if="m.text"
                       class="report-markdown-body"
                       v-html="markdownToSanitizedHtml(m.text)"
                     />
-                    <p v-else class="text-sm text-slate-500">Pensando...</p>
+                    <p v-else-if="m.status === 'thinking' || m.status === 'streaming'" class="text-sm text-slate-500">
+                      {{ m.thinkingText ? 'A redigir resposta…' : 'Pensando…' }}
+                    </p>
                     <p v-if="m.score != null" class="mt-3 text-[11px] font-semibold text-slate-400">
                       Score da resposta: {{ Math.round(m.score * 100) }}%
                     </p>
@@ -2279,7 +2390,7 @@ async function generateRiskReport() {
                 </div>
               </div>
             </div>
-          </ScrollPanel>
+          </div>
 
           <form class="shrink-0 border-t border-slate-200 bg-white p-4" @submit.prevent="submitChat">
             <div class="flex items-center gap-3 rounded-2xl border border-slate-300 bg-white px-4 py-3 shadow-sm focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-100">

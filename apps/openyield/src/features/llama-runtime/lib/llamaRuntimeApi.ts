@@ -31,11 +31,14 @@ export interface ChatCompletionParams {
   responseFormatJson?: boolean
   /** Recebe deltas enquanto o servidor OpenAI-compatible transmite SSE (`stream: true`). */
   onTextDelta?: (delta: string, text: string) => void
+  /** Reasoning/thinking separado (ex.: `choices.delta.reasoning` no LM Studio). */
+  onReasoningDelta?: (delta: string, text: string) => void
 }
 
 export interface ChatCompletionResult {
   text: string
   raw: unknown
+  reasoning?: string
 }
 
 export class LlamaRuntimeError extends Error {
@@ -171,12 +174,16 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
       logger.error('Chat completion request failed', { status: res.status, error: errText })
       throw new LlamaRuntimeError(formatLlmHttpError(res.status, errText), res.status)
     }
-    if (params.onTextDelta) {
+    if (params.onTextDelta || params.onReasoningDelta) {
       const out = await readChatCompletionStream(
         res,
         (delta, text) => {
           refreshTimeout()
           params.onTextDelta?.(delta, text)
+        },
+        (delta, text) => {
+          refreshTimeout()
+          params.onReasoningDelta?.(delta, text)
         },
         refreshTimeout,
       )
@@ -187,8 +194,14 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
         choices?: { message?: { content?: string } }[]
       }
       const text = raw.choices?.[0]?.message?.content ?? ''
+      const reasoning =
+        (raw as { choices?: { message?: { reasoning?: string; reasoning_content?: string } }[] }).choices?.[0]?.message
+          ?.reasoning ??
+        (raw as { choices?: { message?: { reasoning?: string; reasoning_content?: string } }[] }).choices?.[0]?.message
+          ?.reasoning_content ??
+        ''
       logger.info('Chat completion successful', { responseLength: text.length, model: params.model })
-      return { text, raw }
+      return { text, raw, reasoning }
     }
   } catch (e) {
     if (e instanceof LlamaRuntimeError) throw e
@@ -213,21 +226,37 @@ export async function chatCompletion(params: ChatCompletionParams): Promise<Chat
   }
 }
 
-function extractTextDelta(raw: unknown): string {
+function extractStreamParts(raw: unknown): { content: string; reasoning: string } {
   const obj = raw as {
     choices?: {
-      delta?: { content?: string }
-      message?: { content?: string }
+      delta?: {
+        content?: string
+        reasoning?: string
+        reasoning_content?: string
+      }
+      message?: { content?: string; reasoning?: string; reasoning_content?: string }
       text?: string
     }[]
   }
   const choice = obj.choices?.[0]
-  return choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? ''
+  const delta = choice?.delta
+  const reasoning = delta?.reasoning ?? delta?.reasoning_content ?? choice?.message?.reasoning ?? choice?.message?.reasoning_content ?? ''
+  const content = delta?.content ?? choice?.message?.content ?? choice?.text ?? ''
+  return { content, reasoning }
+}
+
+function extractTextDelta(raw: unknown): string {
+  return extractStreamParts(raw).content
+}
+
+function extractReasoningDelta(raw: unknown): string {
+  return extractStreamParts(raw).reasoning
 }
 
 async function readChatCompletionStream(
   res: Response,
   onTextDelta: (delta: string, text: string) => void,
+  onReasoningDelta: (delta: string, text: string) => void,
   onActivity?: () => void,
 ): Promise<ChatCompletionResult> {
   if (!res.body) throw new LlamaRuntimeError('Servidor LLM não retornou corpo de streaming.')
@@ -236,6 +265,7 @@ async function readChatCompletionStream(
   const events: unknown[] = []
   let buffer = ''
   let text = ''
+  let reasoning = ''
 
   const processFrame = (frame: string) => {
     const dataLines = frame
@@ -247,10 +277,15 @@ async function readChatCompletionStream(
       try {
         const raw = JSON.parse(data) as unknown
         events.push(raw)
-        const delta = extractTextDelta(raw)
-        if (!delta) continue
-        text += delta
-        onTextDelta(delta, text)
+        const parts = extractStreamParts(raw)
+        if (parts.reasoning) {
+          reasoning += parts.reasoning
+          onReasoningDelta(parts.reasoning, reasoning)
+        }
+        if (parts.content) {
+          text += parts.content
+          onTextDelta(parts.content, text)
+        }
       } catch {
         logger.warn('Ignoring malformed LLM stream frame', { data: data.slice(0, 240) })
       }
@@ -269,5 +304,5 @@ async function readChatCompletionStream(
 
   buffer += decoder.decode()
   if (buffer.trim()) processFrame(buffer)
-  return { text, raw: { stream: true, events } }
+  return { text, raw: { stream: true, events }, reasoning }
 }
