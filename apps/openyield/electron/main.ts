@@ -6,6 +6,7 @@ import { loadOpenYieldDotEnv } from './appEnv'
 import { resolveAppIconPath } from './appIcon'
 import { readHardwareSummary } from './hardware'
 import { attachMainWindow, registerWindowControlsIpc } from './windowControlsIpc'
+import { migrateLegacyUserDataIfNeeded } from './migrateLegacyUserData'
 import { registerVectorIpc } from './vectorIpc'
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
@@ -76,6 +77,8 @@ registerWindowControlsIpc()
 registerVectorIpc()
 
 app.whenReady().then(() => {
+  migrateLegacyUserDataIfNeeded()
+
   if (process.platform === 'darwin') {
     const iconPath = resolveAppIconPath()
     if (iconPath) app.dock?.setIcon(iconPath)
