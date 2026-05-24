@@ -1,6 +1,7 @@
 {
   "name": "openyield",
   "private": true,
+  "license": "MIT",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev:openyield": "npm run dev -w openyield",

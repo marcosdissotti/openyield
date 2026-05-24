@@ -211,4 +211,4 @@ Versão do app: `apps/openyield/package.json` → campo `version`.
 
 ## Licença
 
-Projeto privado. Uso interno OpenYield.
+[MIT](LICENSE) — Copyright (c) 2025 OpenYield

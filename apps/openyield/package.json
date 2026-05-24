@@ -4,6 +4,7 @@
   "private": true,
   "description": "OpenYield desktop app (Electron + Vue)",
   "author": "openyield",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/marcosdissotti/openyield.git"
