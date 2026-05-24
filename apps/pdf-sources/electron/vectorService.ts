@@ -6,7 +6,7 @@ import { LocalIndex } from 'vectra'
 import type { IndexItem } from 'vectra'
 import type { MetadataTypes } from 'vectra'
 import { env, pipeline, type FeatureExtractionPipeline } from '@xenova/transformers'
-import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '../src/shared/model/pdfLibraryDb'
+import type { DocumentRow, FcdSnapshotRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '../src/shared/model/pdfLibraryDb'
 
 const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2'
 const MAX_CHUNK_CHARS = 1800
@@ -28,6 +28,7 @@ interface WorkspaceMeta {
   activeNotebookId: string | null
   reports?: StudioReportRow[]
   fundamentals?: FundamentalSnapshotRow[]
+  fcdSnapshots?: FcdSnapshotRow[]
 }
 
 interface PageSectionInput {
@@ -97,6 +98,7 @@ function defaultWorkspaceMeta(): WorkspaceMeta {
     activeNotebookId: id,
     reports: [],
     fundamentals: [],
+    fcdSnapshots: [],
   }
 }
 
@@ -110,6 +112,7 @@ function readWorkspaceMeta(): WorkspaceMeta {
         activeNotebookId: parsed.activeNotebookId ?? parsed.notebooks[0]?.id ?? null,
         reports: Array.isArray(parsed.reports) ? (parsed.reports as StudioReportRow[]) : [],
         fundamentals: Array.isArray(parsed.fundamentals) ? (parsed.fundamentals as FundamentalSnapshotRow[]) : [],
+        fcdSnapshots: Array.isArray(parsed.fcdSnapshots) ? (parsed.fcdSnapshots as FcdSnapshotRow[]) : [],
       }
     }
   } catch {
@@ -430,6 +433,7 @@ export class VectorService {
     documents: DocumentRow[]
     reports: StudioReportRow[]
     fundamentals: FundamentalSnapshotRow[]
+    fcdSnapshots: FcdSnapshotRow[]
   }> {
     await this.ensureIndexCreated()
     const meta = readWorkspaceMeta()
@@ -475,6 +479,7 @@ export class VectorService {
     for (const report of meta.reports ?? []) reportsById.set(report.id, report)
     const reports = [...reportsById.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
     const fundamentals = [...(meta.fundamentals ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const fcdSnapshots = [...(meta.fcdSnapshots ?? [])]
 
     const notebooksById = new Map(meta.notebooks.map((n) => [n.id, n]))
     for (const doc of documents) {
@@ -520,8 +525,8 @@ export class VectorService {
       meta.activeNotebookId && notebooks.some((n) => n.id === meta.activeNotebookId)
         ? meta.activeNotebookId
         : notebooks[0]?.id ?? null
-    writeWorkspaceMeta({ notebooks, activeNotebookId, reports, fundamentals })
-    return { notebooks, activeNotebookId, documents, reports, fundamentals }
+    writeWorkspaceMeta({ notebooks, activeNotebookId, reports, fundamentals, fcdSnapshots })
+    return { notebooks, activeNotebookId, documents, reports, fundamentals, fcdSnapshots }
   }
 
   upsertNotebook(row: { id: string; title: string; ticker: string | null }): void {
@@ -563,6 +568,7 @@ export class VectorService {
     meta.notebooks = meta.notebooks.filter((n) => n.id !== notebookId)
     meta.reports = (meta.reports ?? []).filter((report) => report.notebook_id !== notebookId)
     meta.fundamentals = (meta.fundamentals ?? []).filter((snapshot) => snapshot.notebook_id !== notebookId)
+    meta.fcdSnapshots = (meta.fcdSnapshots ?? []).filter((row) => row.notebook_id !== notebookId)
     if (!meta.notebooks.length) {
       writeWorkspaceMeta(defaultWorkspaceMeta())
       return
@@ -731,6 +737,30 @@ export class VectorService {
   async deleteFundamentalSnapshot(snapshotId: string): Promise<void> {
     const meta = readWorkspaceMeta()
     meta.fundamentals = (meta.fundamentals ?? []).filter((snapshot) => snapshot.id !== snapshotId)
+    writeWorkspaceMeta(meta)
+  }
+
+  persistFcdSnapshot(input: { notebookId: string; ticker: string | null; inputsJson: string }): void {
+    const now = new Date().toISOString()
+    const meta = readWorkspaceMeta()
+    const rows = meta.fcdSnapshots ?? []
+    const idx = rows.findIndex((r) => r.notebook_id === input.notebookId)
+    const row: FcdSnapshotRow = {
+      notebook_id: input.notebookId,
+      ticker: input.ticker,
+      inputs_json: input.inputsJson,
+      created_at: idx >= 0 ? rows[idx]!.created_at : now,
+      updated_at: now,
+    }
+    if (idx >= 0) rows[idx] = row
+    else rows.push(row)
+    meta.fcdSnapshots = rows
+    writeWorkspaceMeta(meta)
+  }
+
+  deleteFcdSnapshotForNotebook(notebookId: string): void {
+    const meta = readWorkspaceMeta()
+    meta.fcdSnapshots = (meta.fcdSnapshots ?? []).filter((row) => row.notebook_id !== notebookId)
     writeWorkspaceMeta(meta)
   }
 

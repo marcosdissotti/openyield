@@ -2,10 +2,27 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { flushPromises, mount } from '@vue/test-utils'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../../src/App.vue'
+import { useNotebookStore } from '#entities/notebook'
+import NotebookPage from '../../src/pages/notebook/ui/NotebookPage.vue'
+
+vi.mock('#features/pdf-persistence/bootstrapWorkspace', () => ({
+  bootstrapPdfWorkspace: vi.fn(async () => undefined),
+}))
+
+vi.mock('primevue/scrollpanel', () => ({
+  default: { name: 'ScrollPanel', template: '<div class="scroll-panel-stub"><slot /></div>' },
+}))
+
+vi.mock('#widgets/llm-markdown-preview', () => ({
+  LlmMarkdownPreview: {
+    name: 'LlmMarkdownPreview',
+    props: ['markdown', 'file'],
+    template: '<div data-cy="source-markdown-panel">{{ markdown }}</div>',
+  },
+}))
 
 vi.mock('#features/extract-pdf-rich', async (importOriginal) => {
   const mod = await importOriginal<typeof import('#features/extract-pdf-rich')>()
@@ -44,7 +61,10 @@ describe('PDF drop flow (integration)', () => {
 
   it('shows extracted text after choosing a PDF via file input', async () => {
     const pinia = createPinia()
-    const wrapper = mount(App, {
+    setActivePinia(pinia)
+    useNotebookStore().ensureDefaultInMemory()
+
+    const wrapper = mount(NotebookPage, {
       global: {
         plugins: [pinia, [PrimeVue, { unstyled: true }]],
       },

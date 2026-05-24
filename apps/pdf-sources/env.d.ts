@@ -1,12 +1,17 @@
 /// <reference types="vite/client" />
 
 import type { HardwareSummaryPayload } from './src/shared/model/hardwareSummary'
-import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from './src/shared/model/pdfLibraryDb'
+import type { DocumentRow, FcdSnapshotRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from './src/shared/model/pdfLibraryDb'
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<object, object, unknown>
   export default component
+}
+
+declare module '*.png' {
+  const src: string
+  export default src
 }
 
 export interface PdfSourcesElectronApi {
@@ -29,6 +34,7 @@ export interface PdfSourcesElectronApi {
     documents: DocumentRow[]
     reports: StudioReportRow[]
     fundamentals: FundamentalSnapshotRow[]
+    fcdSnapshots: FcdSnapshotRow[]
   }>
   pdfDbUpsertNotebook?: (row: { id: string; title: string; ticker: string | null }) => Promise<void>
   pdfDbDeleteNotebook?: (notebookId: string) => Promise<void>
@@ -87,6 +93,17 @@ export interface PdfSourcesElectronApi {
     createdAt: string
   }) => Promise<void>
   pdfDbDeleteFundamentalSnapshot?: (snapshotId: string) => Promise<void>
+  pdfDbPersistFcdSnapshot?: (payload: {
+    notebookId: string
+    ticker: string | null
+    inputsJson: string
+  }) => Promise<void>
+  pdfDbDeleteFcdSnapshot?: (notebookId: string) => Promise<void>
+  windowMinimize?: () => void
+  windowMaximize?: () => void
+  windowClose?: () => void
+  windowIsMaximized?: () => Promise<boolean>
+  onWindowMaximizedChanged?: (callback: (maximized: boolean) => void) => () => void
 }
 
 declare global {

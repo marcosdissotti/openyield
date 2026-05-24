@@ -1,4 +1,4 @@
-import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '#shared/model/pdfLibraryDb'
+import type { DocumentRow, FcdSnapshotRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '#shared/model/pdfLibraryDb'
 
 export async function pdfDbLoadWorkspace(): Promise<{
   notebooks: NotebookRow[]
@@ -6,6 +6,7 @@ export async function pdfDbLoadWorkspace(): Promise<{
   documents: DocumentRow[]
   reports: StudioReportRow[]
   fundamentals: FundamentalSnapshotRow[]
+  fcdSnapshots: FcdSnapshotRow[]
 } | null> {
   const api = window.pdfSourcesElectron
   if (!api?.pdfDbLoadWorkspace) return null
@@ -103,6 +104,18 @@ export async function pdfDbPersistFundamentalSnapshot(payload: {
 
 export async function pdfDbDeleteFundamentalSnapshot(snapshotId: string): Promise<void> {
   await window.pdfSourcesElectron?.pdfDbDeleteFundamentalSnapshot?.(snapshotId)
+}
+
+export async function pdfDbPersistFcdSnapshot(payload: {
+  notebookId: string
+  ticker: string | null
+  inputsJson: string
+}): Promise<void> {
+  await window.pdfSourcesElectron?.pdfDbPersistFcdSnapshot?.(payload)
+}
+
+export async function pdfDbDeleteFcdSnapshot(notebookId: string): Promise<void> {
+  await window.pdfSourcesElectron?.pdfDbDeleteFcdSnapshot?.(notebookId)
 }
 
 export function isPdfDbAvailable(): boolean {

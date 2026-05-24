@@ -63,3 +63,12 @@ export interface FundamentalSnapshotRow {
   created_at: string
   updated_at: string
 }
+
+/** Modelo FCD persistido por caderno (1 por notebook_id). */
+export interface FcdSnapshotRow {
+  notebook_id: string
+  ticker: string | null
+  inputs_json: string
+  created_at: string
+  updated_at: string
+}

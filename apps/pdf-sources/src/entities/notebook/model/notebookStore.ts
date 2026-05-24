@@ -11,6 +11,7 @@ import { refreshPdfWorkspaceFromDb } from '#features/pdf-persistence/bootstrapWo
 import { usePdfSourcesStore } from '#entities/pdf-source'
 import { useStudioReportStore } from '#entities/studio-report'
 import { useFundamentalSnapshotStore } from '#entities/fundamental-snapshot'
+import { useFcdSnapshotStore } from '#entities/fcd-snapshot'
 
 export interface NotebookVm {
   id: string
@@ -77,9 +78,11 @@ export const useNotebookStore = defineStore('notebook', () => {
     const pdf = usePdfSourcesStore()
     const reports = useStudioReportStore()
     const fundamentals = useFundamentalSnapshotStore()
+    const fcd = useFcdSnapshotStore()
     pdf.removeAllForNotebook(id)
     reports.removeAllForNotebook(id)
     fundamentals.removeAllForNotebook(id)
+    fcd.removeAllForNotebook(id)
     if (isPdfDbAvailable()) {
       await pdfDbDeleteNotebook(id)
       await refreshPdfWorkspaceFromDb()

@@ -3,7 +3,9 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadPdfSourcesDotEnv } from './appEnv'
+import { resolveAppIconPath } from './appIcon'
 import { readHardwareSummary } from './hardware'
+import { attachMainWindow, registerWindowControlsIpc } from './windowControlsIpc'
 import { registerVectorIpc } from './vectorIpc'
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
@@ -40,10 +42,15 @@ function createWindow() {
     console.info('[pdf-sources] Preload:', preload)
   }
 
+  const iconPath = resolveAppIconPath()
+
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    frame: false,
     autoHideMenuBar: true,
+    backgroundColor: '#000000',
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -52,6 +59,7 @@ function createWindow() {
     },
   })
   win.setMenuBarVisibility(false)
+  attachMainWindow(win)
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     void win.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -64,9 +72,15 @@ function createWindow() {
 }
 
 ipcMain.handle('get-hardware-summary', async () => readHardwareSummary())
+registerWindowControlsIpc()
 registerVectorIpc()
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    const iconPath = resolveAppIconPath()
+    if (iconPath) app.dock?.setIcon(iconPath)
+  }
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

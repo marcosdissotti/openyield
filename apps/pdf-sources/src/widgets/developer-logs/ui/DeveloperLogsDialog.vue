@@ -70,11 +70,11 @@ function clearLogs() {
 function getLevelColor(level: LogLevel): string {
   switch (level) {
     case 'DEBUG':
-      return 'text-slate-500'
+      return 'text-emerald-600'
     case 'INFO':
-      return 'text-blue-600'
+      return 'text-emerald-600'
     case 'WARN':
-      return 'text-amber-600'
+      return 'text-emerald-600'
     case 'ERROR':
       return 'text-rose-600'
     default:
@@ -89,7 +89,7 @@ function getLevelBg(level: LogLevel): string {
     case 'INFO':
       return 'bg-blue-50'
     case 'WARN':
-      return 'bg-amber-50'
+      return 'bg-emerald-50'
     case 'ERROR':
       return 'bg-rose-50'
     default:
@@ -112,7 +112,7 @@ function formatData(data: unknown): string {
   <Dialog
     v-model:visible="visible"
     modal
-    header="Developer Logs"
+    header="OpenYield - Developer Logs"
     :style="{ width: '90vw', maxWidth: '1200px', maxHeight: '90vh' }"
     :pt="{
       root: { class: 'border border-slate-300 bg-slate-900 text-slate-100' },

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type ShellAppId = 'pdf'
+export type ShellAppId = 'pdf' | 'fcd'
 
 export const useAppShellStore = defineStore('appShell', () => {
   const activeApp = ref<ShellAppId>('pdf')

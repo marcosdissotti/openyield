@@ -27,6 +27,7 @@ import { useLlmRuntimeStore } from '#entities/llm-runtime'
 import LlmRuntimeBar from '#widgets/llm-runtime-bar/ui/LlmRuntimeBar.vue'
 import { DeveloperLogsDialog } from '#widgets/developer-logs'
 import { logger } from '#shared/lib/logger'
+import OpenYieldLogo from '#shared/ui/OpenYieldLogo.vue'
 import { isPdfDbAvailable, pdfDbPersistDocument, pdfDbReadDocumentFile } from '#features/pdf-persistence/lib/pdfDbClient'
 import {
   vectorBuscarChunksDoNotebook,
@@ -1858,20 +1859,12 @@ async function generateRiskReport() {
 </script>
 
 <template>
-  <div class="flex h-screen min-h-0 flex-col bg-[#edf1f7] text-slate-950">
+  <div class="flex h-full min-h-0 flex-col bg-[#edf1f7] text-slate-950">
     <header class="flex h-16 shrink-0 items-center gap-4 px-4">
       <div class="flex min-w-0 flex-1 items-center gap-3">
-        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white shadow-sm">
-          <span class="text-sm font-black tracking-tight">RI</span>
-        </div>
         <div class="min-w-0">
           <div class="flex items-center gap-2">
-            <h1 class="truncate text-lg font-semibold tracking-tight text-slate-950">
-              RI Hub
-            </h1>
-            <span class="hidden rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 sm:inline">
-              Investidores
-            </span>
+            <OpenYieldLogo size="xl" />
           </div>
           <p class="truncate text-xs text-slate-500">
             {{ selectedNotebook ? notebookDisplayTitle(selectedNotebook) : 'Caderno' }}
@@ -2009,9 +2002,10 @@ async function generateRiskReport() {
         <div class="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4">
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-sm font-semibold text-slate-950">
-                {{ activeStudioReport ? activeStudioReport.title : activeFundamentalSnapshot ? activeFundamentalSnapshot.title : store.selected ? 'Documento' : 'OpenYield' }}
+              <h2 v-if="activeStudioReport || activeFundamentalSnapshot || store.selected" class="text-sm font-semibold text-slate-950">
+                {{ activeStudioReport ? activeStudioReport.title : activeFundamentalSnapshot ? activeFundamentalSnapshot.title : 'Documento' }}
               </h2>
+              <OpenYieldLogo v-else size="sm" />
               <span
                 v-if="!activeStudioReport && !activeFundamentalSnapshot && !store.selected"
                 tabindex="0"
@@ -2073,7 +2067,7 @@ async function generateRiskReport() {
               >
                 <div class="mb-4 flex items-center justify-between gap-3 border-b border-slate-200 pb-4">
                   <div>
-                    <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Relatório RI Hub</p>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Relatório OpenYield</p>
                     <h3 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
                       {{ activeStudioReport.title }}
                     </h3>
@@ -2356,7 +2350,7 @@ async function generateRiskReport() {
         <div class="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4">
           <div>
             <h2 class="text-sm font-semibold text-slate-950">Estúdio</h2>
-            <p class="text-[11px] text-slate-500">Ferramentas RI</p>
+            <p class="text-[11px] text-slate-500">Ferramentas OpenYield</p>
           </div>
           <button
             type="button"
@@ -2485,7 +2479,7 @@ async function generateRiskReport() {
     </main>
 
     <footer class="flex h-6 shrink-0 items-center justify-between border-t border-slate-200 bg-[#e9edf5] px-4 text-[11px] text-slate-500">
-      <span>O RI Hub pode gerar respostas incorretas. Por isso, confira o conteúdo nas fontes e documentos oficiais.</span>
+      <span>O OpenYield pode gerar respostas incorretas. Por isso, confira o conteúdo nas fontes e documentos oficiais.</span>
       <button
         type="button"
         class="font-semibold text-slate-600 hover:text-indigo-700"

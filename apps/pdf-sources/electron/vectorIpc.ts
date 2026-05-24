@@ -117,4 +117,15 @@ export function registerVectorIpc(): void {
   ipcMain.handle('pdf-db-delete-fundamental-snapshot', async (_event, snapshotId: string) => {
     await service.deleteFundamentalSnapshot(String(snapshotId ?? ''))
   })
+
+  ipcMain.handle(
+    'pdf-db-persist-fcd-snapshot',
+    (_event, payload: { notebookId: string; ticker: string | null; inputsJson: string }) => {
+      service.persistFcdSnapshot(payload)
+    },
+  )
+
+  ipcMain.handle('pdf-db-delete-fcd-snapshot', (_event, notebookId: string) => {
+    service.deleteFcdSnapshotForNotebook(String(notebookId ?? ''))
+  })
 }

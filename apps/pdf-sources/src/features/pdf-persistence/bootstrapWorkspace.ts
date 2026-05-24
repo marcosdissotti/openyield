@@ -2,6 +2,7 @@ import { useNotebookStore } from '#entities/notebook'
 import { usePdfSourcesStore } from '#entities/pdf-source'
 import { useStudioReportStore } from '#entities/studio-report'
 import { useFundamentalSnapshotStore } from '#entities/fundamental-snapshot'
+import { useFcdSnapshotStore } from '#entities/fcd-snapshot'
 import { pdfDbLoadWorkspace } from './lib/pdfDbClient'
 
 export async function bootstrapPdfWorkspace(): Promise<void> {
@@ -9,6 +10,7 @@ export async function bootstrapPdfWorkspace(): Promise<void> {
   const pdf = usePdfSourcesStore()
   const reports = useStudioReportStore()
   const fundamentals = useFundamentalSnapshotStore()
+  const fcd = useFcdSnapshotStore()
   const state = await pdfDbLoadWorkspace()
   if (!state) {
     notebook.ensureDefaultInMemory()
@@ -18,6 +20,7 @@ export async function bootstrapPdfWorkspace(): Promise<void> {
   pdf.hydrateFromDocuments(state.documents)
   reports.hydrateFromRows(state.reports ?? [])
   fundamentals.hydrateFromRows(state.fundamentals ?? [])
+  fcd.hydrateFromRows(state.fcdSnapshots ?? [])
 }
 
 export const refreshPdfWorkspaceFromDb = bootstrapPdfWorkspace

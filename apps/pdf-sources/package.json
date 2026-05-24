@@ -2,7 +2,7 @@
   "name": "pdf-sources",
   "version": "0.0.1",
   "private": true,
-  "description": "PDF Sources desktop app (Electron + Vue)",
+  "description": "OpenYield desktop app (Electron + Vue)",
   "author": "rihubai",
   "type": "module",
   "main": "dist-electron/main.js",

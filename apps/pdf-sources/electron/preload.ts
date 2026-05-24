@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DocumentRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '../src/shared/model/pdfLibraryDb'
+import type { DocumentRow, FcdSnapshotRow, FundamentalSnapshotRow, NotebookRow, StudioReportRow } from '../src/shared/model/pdfLibraryDb'
 
 export interface HardwareSummaryPayload {
   vramBytes: number | null
@@ -28,6 +28,7 @@ export interface PdfSourcesElectronApi {
     documents: DocumentRow[]
     reports: StudioReportRow[]
     fundamentals: FundamentalSnapshotRow[]
+    fcdSnapshots: FcdSnapshotRow[]
   }>
   pdfDbUpsertNotebook: (row: { id: string; title: string; ticker: string | null }) => Promise<void>
   pdfDbDeleteNotebook: (notebookId: string) => Promise<void>
@@ -86,6 +87,17 @@ export interface PdfSourcesElectronApi {
     createdAt: string
   }) => Promise<void>
   pdfDbDeleteFundamentalSnapshot: (snapshotId: string) => Promise<void>
+  pdfDbPersistFcdSnapshot: (payload: {
+    notebookId: string
+    ticker: string | null
+    inputsJson: string
+  }) => Promise<void>
+  pdfDbDeleteFcdSnapshot: (notebookId: string) => Promise<void>
+  windowMinimize: () => void
+  windowMaximize: () => void
+  windowClose: () => void
+  windowIsMaximized: () => Promise<boolean>
+  onWindowMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
 }
 
 const api: PdfSourcesElectronApi = {
@@ -107,6 +119,17 @@ const api: PdfSourcesElectronApi = {
   pdfDbDeleteStudioReport: async (reportId) => ipcRenderer.invoke('pdf-db-delete-studio-report', reportId),
   pdfDbPersistFundamentalSnapshot: async (payload) => ipcRenderer.invoke('pdf-db-persist-fundamental-snapshot', payload),
   pdfDbDeleteFundamentalSnapshot: async (snapshotId) => ipcRenderer.invoke('pdf-db-delete-fundamental-snapshot', snapshotId),
+  pdfDbPersistFcdSnapshot: async (payload) => ipcRenderer.invoke('pdf-db-persist-fcd-snapshot', payload),
+  pdfDbDeleteFcdSnapshot: async (notebookId) => ipcRenderer.invoke('pdf-db-delete-fcd-snapshot', notebookId),
+  windowMinimize: () => ipcRenderer.send('window-minimize'),
+  windowMaximize: () => ipcRenderer.send('window-maximize'),
+  windowClose: () => ipcRenderer.send('window-close'),
+  windowIsMaximized: async () => ipcRenderer.invoke('window-is-maximized'),
+  onWindowMaximizedChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, maximized: boolean) => callback(maximized)
+    ipcRenderer.on('window-maximized-changed', listener)
+    return () => ipcRenderer.removeListener('window-maximized-changed', listener)
+  },
 }
 
 if (process.contextIsolated) {

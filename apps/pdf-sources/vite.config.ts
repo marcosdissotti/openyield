@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -6,6 +7,14 @@ import { buildElectronMain, electronMainDevPlugin } from './electron/vite-dev-pl
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webOnly = process.env.VITE_WEB_ONLY === '1'
+const appIconSrc = path.resolve(__dirname, 'src/assets/oy-icon.png')
+const appIconPublic = path.resolve(__dirname, 'public/oy-icon.png')
+
+function syncAppIconToPublic() {
+  if (!existsSync(appIconSrc)) return
+  mkdirSync(path.dirname(appIconPublic), { recursive: true })
+  copyFileSync(appIconSrc, appIconPublic)
+}
 
 const fsdAliases = {
   '#shared': path.resolve(__dirname, 'src/shared'),
@@ -26,6 +35,12 @@ export default defineConfig(({ mode }) => {
     base: './',
     resolve: { alias: fsdAliases },
     plugins: [
+      {
+        name: 'sync-app-icon',
+        buildStart() {
+          syncAppIconToPublic()
+        },
+      },
       vue(),
       ...(webOnly ? [] : [electronMainDevPlugin(__dirname)]),
       ...(webOnly
