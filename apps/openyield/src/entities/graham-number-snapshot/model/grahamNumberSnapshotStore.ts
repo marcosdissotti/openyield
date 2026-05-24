@@ -51,6 +51,15 @@ export const useGrahamNumberSnapshotStore = defineStore('grahamNumberSnapshot', 
     return defaultGrahamNumberInputs(ticker ?? 'TICKER')
   }
 
+  function hydrateFromLocalStorage() {
+    const next: Record<string, GrahamNumberModelInputs> = {}
+    for (const row of readFallback()) {
+      const inputs = parseInputs(row.inputs_json)
+      if (inputs) next[row.notebook_id] = inputs
+    }
+    byNotebookId.value = next
+  }
+
   function persist(
     notebookId: string,
     ticker: string | null | undefined,
@@ -69,6 +78,7 @@ export const useGrahamNumberSnapshotStore = defineStore('grahamNumberSnapshot', 
 
   return {
     byNotebookId,
+    hydrateFromLocalStorage,
     inputsForNotebook,
     persist,
   }

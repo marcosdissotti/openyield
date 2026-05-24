@@ -7,6 +7,7 @@ import { resolveAppIconPath } from './appIcon'
 import { readHardwareSummary } from './hardware'
 import { attachMainWindow, registerWindowControlsIpc } from './windowControlsIpc'
 import { migrateLegacyUserDataIfNeeded } from './migrateLegacyUserData'
+import { registerWorkspacePackIpc } from './workspacePackIpc'
 import { registerVectorIpc } from './vectorIpc'
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
@@ -74,6 +75,7 @@ function createWindow() {
 
 ipcMain.handle('get-hardware-summary', async () => readHardwareSummary())
 registerWindowControlsIpc()
+registerWorkspacePackIpc()
 registerVectorIpc()
 
 app.whenReady().then(() => {

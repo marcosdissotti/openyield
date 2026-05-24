@@ -24,6 +24,8 @@ Repositório: [github.com/marcosdissotti/openyield](https://github.com/marcosdis
 - Índice vetorial local (**Vectra** + embeddings `@xenova/transformers`) para buscar trechos relevantes nos PDFs do caderno.
 - Workspace persistido no Electron (`workspace.json`, PDFs em disco, snapshots por caderno).
 
+Detalhes sobre o Vectra, pastas no disco e backup: [Vectra (busca semântica)](#vectra-busca-semântica).
+
 ### Valuation
 Área dedicada com sidebar de métodos e formulários por técnica:
 
@@ -180,6 +182,68 @@ No desktop, o preload expõe `window.openYieldElectron` com:
 - Resumo de hardware
 
 Tipos em `apps/openyield/env.d.ts` e implementação em `apps/openyield/electron/preload.ts`.
+
+---
+
+## Vectra (busca semântica)
+
+O OpenYield usa [Vectra](https://github.com/Stevenic/vectra) como **índice vetorial local** no processo Electron. Cada PDF importado é dividido em chunks (por página/seção); cada chunk recebe um embedding do modelo **`Xenova/all-MiniLM-L6-v2`** (`@xenova/transformers`) e fica pesquisável por similaridade.
+
+### Para que serve no app
+
+- **Chat do caderno** — ao fazer perguntas, o app busca os chunks mais relevantes do notebook ativo (`vectorBuscarChunksNotebook`).
+- **Relatórios do Estúdio** (riscos, fundamentos, etc.) — recuperam contexto dos PDFs antes de chamar o LLM.
+- **Indexação automática** — ao carregar PDFs, o main process persiste texto, metadados e vetores (`vectorGarantirChunksNotebook`).
+
+Não há UI separada do Vectra: o acesso é **via app** (chat/estúdio) ou **direto nos ficheiros** abaixo.
+
+### Onde ficam os dados no disco
+
+Tudo vive em `{userData}/vectra/`, onde `userData` é a pasta de dados do Electron para o OpenYield:
+
+| SO | Caminho típico |
+|----|----------------|
+| **Windows** | `%APPDATA%\openyield\vectra\` |
+| **Linux / WSL** | `~/.config/openyield/vectra/` |
+| **macOS** | `~/Library/Application Support/openyield/vectra/` |
+
+Instalação antiga (**pdf-sources**): mesma estrutura em `%APPDATA%\pdf-sources\` ou `~/.config/pdf-sources/`. Na primeira arrancada, o app tenta [migrar automaticamente](apps/openyield/electron/migrateLegacyUserData.ts) se o workspace novo estiver vazio.
+
+### Estrutura da pasta `vectra/`
+
+```
+vectra/
+├── workspace.json      # cadernos, relatórios, fundamentos, snapshots FCD (metadados)
+├── pdfs/               # PDFs originais (ficheiros nomeados por SHA-256)
+└── documents/          # índice Vectra (vetores + metadados por chunk)
+```
+
+Cache do modelo de embeddings (separado):
+
+| SO | Caminho |
+|----|---------|
+| Windows | `%APPDATA%\openyield\transformers-cache\` |
+| Linux | `~/.config/openyield/transformers-cache/` |
+| macOS | `~/Library/Application Support/openyield/transformers-cache/` |
+
+### Como aceder / inspecionar
+
+1. **Pelo app (uso normal)** — importe PDFs no caderno e use o chat ou ferramentas do Estúdio; a busca vetorial corre em background.
+2. **Log de arranque** — ao abrir o desktop, o main process regista no terminal:
+   `[openyield] App iniciado. Índice Vectra em: …/vectra/documents`
+   (em dev: consola onde corre `npm run dev:openyield`; build: Developer Logs se disponível).
+3. **Ficheiros** — abra `workspace.json` para ver cadernos/relatórios; a pasta `documents/` é o índice Vectra (não editar manualmente enquanto o app estiver aberto).
+4. **Backup** — copie a pasta `vectra/` inteira (com o app fechado) para preservar PDFs, índice e metadados.
+
+### Código relevante
+
+| Peça | Local |
+|------|--------|
+| Serviço Vectra + embeddings | `apps/openyield/electron/vectorService.ts` |
+| IPC / preload | `apps/openyield/electron/vectorIpc.ts`, `preload.ts` |
+| Cliente no frontend | `apps/openyield/src/features/vector-persistence/lib/vectorClient.ts` |
+
+A API exposta ao renderer inclui `vectorBuscar`, `vectorBuscarChunksNotebook`, `vectorGarantirChunksNotebook` e `pdfDbLoadWorkspace` (workspace completo).
 
 ---
 

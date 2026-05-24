@@ -13,6 +13,8 @@ const electronExternals = [
   '@huggingface/transformers',
   'onnxruntime-node',
   'sharp',
+  'archiver',
+  'extract-zip',
 ]
 
 /**

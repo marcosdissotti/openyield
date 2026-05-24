@@ -98,6 +98,19 @@ export interface OpenYieldElectronApi {
   windowClose: () => void
   windowIsMaximized: () => Promise<boolean>
   onWindowMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
+  workspaceExportPack?: (payload: {
+    appVersion?: string
+    llmSettings?: Record<string, unknown> | null
+    localSnapshots?: Record<string, unknown> | null
+  }) => Promise<{ canceled: boolean; path?: string }>
+  workspaceImportPack?: (payload: {
+    mode: 'replace' | 'merge'
+  }) => Promise<{
+    canceled: boolean
+    fileName?: string
+    mode?: 'replace' | 'merge'
+    manifest?: Record<string, unknown>
+  }>
 }
 
 const api: OpenYieldElectronApi = {
@@ -130,6 +143,8 @@ const api: OpenYieldElectronApi = {
     ipcRenderer.on('window-maximized-changed', listener)
     return () => ipcRenderer.removeListener('window-maximized-changed', listener)
   },
+  workspaceExportPack: async (payload) => ipcRenderer.invoke('workspace-export-pack', payload),
+  workspaceImportPack: async (payload) => ipcRenderer.invoke('workspace-import-pack', payload),
 }
 
 if (process.contextIsolated) {

@@ -914,6 +914,10 @@ export class VectorService {
 
 let vectorServiceSingleton: VectorService | null = null
 
+export function resetVectorService(): void {
+  vectorServiceSingleton = null
+}
+
 export function getVectorService(): VectorService {
   if (!vectorServiceSingleton) vectorServiceSingleton = new VectorService()
   return vectorServiceSingleton

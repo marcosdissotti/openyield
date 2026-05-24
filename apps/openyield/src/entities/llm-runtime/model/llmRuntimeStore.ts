@@ -85,6 +85,26 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     })
   }
 
+  function exportSettings(): PersistedShape {
+    return {
+      llmServerBaseUrl: llmServerBaseUrl.value,
+      chatModelName: chatModelName.value,
+      llmApiToken: llmApiToken.value,
+      hfToken: hfToken.value,
+      llmApiTokenVisible: llmApiTokenVisible.value,
+    }
+  }
+
+  function importSettings(data: Partial<PersistedShape> | null | undefined) {
+    if (!data) return
+    if (typeof data.llmServerBaseUrl === 'string') llmServerBaseUrl.value = data.llmServerBaseUrl
+    if (typeof data.chatModelName === 'string') chatModelName.value = data.chatModelName
+    if (typeof data.llmApiToken === 'string') llmApiToken.value = data.llmApiToken
+    if (typeof data.hfToken === 'string') hfToken.value = data.hfToken
+    if (typeof data.llmApiTokenVisible === 'boolean') llmApiTokenVisible.value = data.llmApiTokenVisible
+    persist()
+  }
+
   watch([llmServerBaseUrl, chatModelName, llmApiToken, hfToken, llmApiTokenVisible], persist, { flush: 'sync' })
 
   let modelsRefreshRun = 0
@@ -220,5 +240,7 @@ export const useLlmRuntimeStore = defineStore('llmRuntime', () => {
     setLlmApiToken,
     disconnect,
     persist,
+    exportSettings,
+    importSettings,
   }
 })

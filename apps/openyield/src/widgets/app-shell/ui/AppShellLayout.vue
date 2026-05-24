@@ -4,7 +4,7 @@ import { useAppShellStore } from '#entities/app-shell'
 import { NotebookPage, FcdPage } from '#pages'
 import AppActivityRail from '#widgets/app-shell/ui/AppActivityRail.vue'
 import AppTitleBar from '#widgets/app-shell/ui/AppTitleBar.vue'
-import LlmRuntimeSettingsDialog from '#widgets/llm-runtime-bar/ui/LlmRuntimeSettingsDialog.vue'
+import AppSettingsDialog from '#widgets/app-shell/ui/AppSettingsDialog.vue'
 import { bootstrapPdfWorkspace } from '#features/pdf-persistence/bootstrapWorkspace'
 
 const shell = useAppShellStore()
@@ -23,7 +23,7 @@ onBeforeMount(() => {
         <NotebookPage v-if="shell.activeApp === 'pdf'" />
         <FcdPage v-else-if="shell.activeApp === 'fcd'" class="min-h-0 flex-1" />
       </div>
-      <LlmRuntimeSettingsDialog v-model:visible="shell.settingsVisible" />
+      <AppSettingsDialog v-model:visible="shell.settingsVisible" />
     </div>
   </div>
 </template>
