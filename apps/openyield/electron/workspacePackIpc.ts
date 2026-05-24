@@ -26,21 +26,30 @@ export function registerWorkspacePackIpc(): void {
       const dialogOptions = {
         title: 'Exportar pacote OpenYield',
         defaultPath: defaultName,
-        filters: [{ name: 'Pacote OpenYield', extensions: ['openyield.zip', 'zip'] }],
+        filters: [{ name: 'Pacote OpenYield', extensions: ['zip'] }],
       }
       const { canceled, filePath } = win
         ? await dialog.showSaveDialog(win, dialogOptions)
         : await dialog.showSaveDialog(dialogOptions)
       if (canceled || !filePath) return { canceled: true as const }
 
-      const resolvedPath = filePath.endsWith('.zip') ? filePath : `${filePath}.openyield.zip`
-      const result = await exportWorkspacePack({
-        destinationPath: resolvedPath,
-        appVersion: payload?.appVersion,
-        llmSettings: payload?.llmSettings ?? null,
-        localSnapshots: payload?.localSnapshots ?? null,
-      })
-      return { canceled: false as const, path: result.path }
+      const resolvedPath = filePath.toLowerCase().endsWith('.openyield.zip')
+        ? filePath
+        : filePath.toLowerCase().endsWith('.zip')
+          ? filePath.replace(/\.zip$/i, '.openyield.zip')
+          : `${filePath}.openyield.zip`
+      try {
+        const result = await exportWorkspacePack({
+          destinationPath: resolvedPath,
+          appVersion: payload?.appVersion,
+          llmSettings: payload?.llmSettings ?? null,
+          localSnapshots: payload?.localSnapshots ?? null,
+        })
+        return { canceled: false as const, path: result.path }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Falha ao exportar pacote.'
+        throw new Error(message)
+      }
     },
   )
 
@@ -51,7 +60,7 @@ export function registerWorkspacePackIpc(): void {
       const openOptions: OpenDialogOptions = {
         title: 'Importar pacote OpenYield',
         properties: ['openFile'],
-        filters: [{ name: 'Pacote OpenYield', extensions: ['openyield.zip', 'zip'] }],
+        filters: [{ name: 'Pacote OpenYield', extensions: ['zip'] }],
       }
       const { canceled, filePaths } = win
         ? await dialog.showOpenDialog(win, openOptions)

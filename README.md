@@ -133,7 +133,7 @@ Cada entity/feature expõe um `index.ts` na raiz do slice (ex.: `#entities/noteb
 
 ### Pré-requisitos
 
-- **Node.js 22+** (requerido por `vectra`)
+- **Node.js 24.11+** (requerido por `vectra`; ver `.nvmrc`)
 - **npm** (workspaces na raiz)
 - Para IA local: [LM Studio](https://lmstudio.ai/) com servidor API ativo
 

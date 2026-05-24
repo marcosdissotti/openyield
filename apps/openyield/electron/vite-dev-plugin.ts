@@ -29,7 +29,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     bundle: true,
     platform: 'node',
     format: 'esm',
-    target: 'node20',
+    target: 'node24',
     external: electronExternals,
     sourcemap: true,
     logLevel: 'warning',
@@ -41,7 +41,7 @@ export async function bundleElectronShell(appRoot: string): Promise<void> {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node24',
     external: electronExternals,
     sourcemap: true,
     logLevel: 'warning',
@@ -77,6 +77,18 @@ export function electronMainDevPlugin(appRoot: string): Plugin {
           const electronPath = req('electron') as string
 
           await bundleElectronShell(appRoot)
+
+          server.watcher.on('change', (file) => {
+            const normalized = file.replace(/\\/g, '/')
+            if (!normalized.includes('/electron/')) return
+            void bundleElectronShell(appRoot)
+              .then(() => {
+                console.info(
+                  '[openyield] Electron rebundled. Recarregue a janela (Ctrl+R) ou reinicie `npm run dev` para preload novo.',
+                )
+              })
+              .catch((err) => console.error('[openyield] Falha ao rebundlar Electron:', err))
+          })
 
           if (child) return
           loadOpenYieldDotEnv(appRoot, process.cwd())

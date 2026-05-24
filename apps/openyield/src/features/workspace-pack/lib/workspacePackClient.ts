@@ -2,6 +2,7 @@ import { useLlmRuntimeStore } from '#entities/llm-runtime'
 import { useGrahamSnapshotStore } from '#entities/graham-snapshot/model/grahamSnapshotStore'
 import { useGrahamNumberSnapshotStore } from '#entities/graham-number-snapshot/model/grahamNumberSnapshotStore'
 import { bootstrapPdfWorkspace } from '#features/pdf-persistence/bootstrapWorkspace'
+import { isElectronDesktop } from '#shared/lib/isElectronDesktop'
 
 export type WorkspacePackImportMode = 'replace' | 'merge'
 
@@ -23,7 +24,15 @@ export interface WorkspacePackExportPayload {
 }
 
 export function isWorkspacePackAvailable(): boolean {
-  return !!window.openYieldElectron?.workspaceExportPack
+  return typeof window !== 'undefined' && !!window.openYieldElectron?.workspaceExportPack
+}
+
+export function workspacePackUnavailableReason(): string | null {
+  if (isWorkspacePackAvailable()) return null
+  if (isElectronDesktop()) {
+    return 'Reinicie a app OpenYield (feche e abra de novo). Se persistir, actualize para a versão mais recente.'
+  }
+  return 'Importar e exportar só funciona na app desktop (Electron), não no browser.'
 }
 
 const LOCAL_SNAPSHOT_KEYS = {

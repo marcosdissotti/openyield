@@ -3,6 +3,9 @@
   "version": "0.0.2",
   "private": true,
   "license": "MIT",
+  "engines": {
+    "node": ">=24.11.1"
+  },
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev:openyield": "npm run dev -w openyield",
