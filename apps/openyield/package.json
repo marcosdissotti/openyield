@@ -16,8 +16,9 @@
     "dev:web": "VITE_WEB_ONLY=1 vite",
     "build": "vue-tsc -b && vite build",
     "clean:pack": "rm -rf dist dist-electron release",
-    "dist:electron:win": "npm run clean:pack && npm run build && electron-builder --win portable --x64",
-    "dist:electron:win:ci": "npm run clean:pack && npm run build && electron-builder --win portable --x64 --publish never",
+    "dist:electron:win": "npm run clean:pack && npm run build && npm run pack:deps && electron-builder --win portable --x64",
+    "dist:electron:win:ci": "npm run clean:pack && npm run build && npm run pack:deps && electron-builder --win portable --x64 --publish never",
+    "pack:deps": "node scripts/prepare-electron-pack.mjs",
     "dist:electron:linux": "npm run clean:pack && npm run build && electron-builder --linux AppImage",
     "dist:electron:mac": "npm run clean:pack && npm run build && electron-builder --mac dmg",
     "test": "npm run gen:fixture && vitest run",
@@ -37,7 +38,9 @@
     "primevue": "^4.2.5",
     "tesseract.js": "^5.1.1",
     "vectra": "^0.14.0",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "color-convert": "^2.0.1",
+    "color-name": "^1.1.4"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",

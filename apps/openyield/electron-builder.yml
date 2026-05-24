@@ -22,7 +22,15 @@ files:
   - dist-electron/**/*
   - src/assets/oy-icon.png
   - package.json
+  - node_modules/**/*
+  - "!node_modules/**/{CHANGELOG.md,README.md,README,readme.md,test,tests,__tests__,docs,doc,examples,.bin}"
   - "!resources{,/**/*}"
+
+asarUnpack:
+  - "**/*.node"
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@xenova/**"
+  - "**/node_modules/onnxruntime-node/**"
 
 asar: true
 # CI: portable usa NSIS+7zip; "normal" evita mx=9 (~751 MiB demora e pode ser cancelado).
