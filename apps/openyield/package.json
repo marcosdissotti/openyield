@@ -6,7 +6,7 @@
   "author": "openyield",
   "repository": {
     "type": "git",
-    "url": "https://github.com/marcosdissotti/rihubproject.git"
+    "url": "https://github.com/marcosdissotti/openyield.git"
   },
   "type": "module",
   "main": "dist-electron/main.js",

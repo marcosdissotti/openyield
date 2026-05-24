@@ -9,7 +9,7 @@ copyright: Copyright © 2026 OpenYield
 publish:
   provider: github
   owner: marcosdissotti
-  repo: rihubproject
+  repo: openyield
 icon: src/assets/oy-icon.png
 
 directories:
