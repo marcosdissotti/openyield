@@ -1,3 +1,8 @@
+# IDE / agentes locais
+.idea
+.qwen/
+.cursor/
+
 # Dependências e caches
 node_modules
 .pnpm-store
@@ -36,5 +41,3 @@ cypress/videos
 .DS_Store
 Thumbs.db
 
-# IDE (opcional — remove a linha se quiseres versionar .vscode)
-.idea
