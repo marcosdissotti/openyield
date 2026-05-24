@@ -1,11 +1,12 @@
 {
-  "name": "rihubai",
+  "name": "openyield",
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev:pdf-sources": "npm run dev -w pdf-sources",
-    "dev:pdf-sources:web": "npm run dev:web -w pdf-sources",
-    "test:pdf-sources": "npm run test -w pdf-sources",
-    "e2e:pdf-sources": "npm run e2e -w pdf-sources"
+    "dev:openyield": "npm run dev -w openyield",
+    "dev:openyield:web": "npm run dev:web -w openyield",
+    "test:openyield": "npm run test -w openyield",
+    "e2e:openyield": "npm run e2e -w openyield",
+    "dist:openyield:win": "npm run dist:electron:win -w openyield"
   }
 }

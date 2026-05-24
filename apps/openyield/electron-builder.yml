@@ -1,0 +1,44 @@
+# Saída: pasta release/ (ignorada no git na raiz do monorepo)
+# Versão fixa: em workspaces o electron costuma ficar na raiz e o builder não resolve ^ no package.json.
+electronVersion: 33.4.11
+
+appId: com.openyield.app
+productName: OpenYield
+copyright: Copyright © 2026 OpenYield
+
+publish:
+  provider: github
+  owner: marcosdissotti
+  repo: rihubproject
+icon: src/assets/oy-icon.png
+
+directories:
+  output: release
+
+# Não embutir resources/ (llama-server local): symlinks para fora do appDir
+# fazem o electron-builder fazer stat no destino (ex.: path antigo → ENOENT).
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - src/assets/oy-icon.png
+  - package.json
+  - "!resources{,/**/*}"
+
+asar: true
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  signAndEditExecutable: false
+
+linux:
+  target:
+    - AppImage
+  category: Office
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity

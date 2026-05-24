@@ -7,7 +7,7 @@ Scrollbar horizontal indesejada e conteúdo truncado (texto com "...") na área 
 
 ## Arquivos Alterados
 
-### 1. `apps/pdf-sources/src/widgets/llm-markdown-preview/ui/LlmMarkdownPreview.vue`
+### 1. `apps/openyield/src/widgets/llm-markdown-preview/ui/LlmMarkdownPreview.vue`
 
 **Principais mudanças:**
 - ✅ **Adicionado `overflow-auto`** ao container principal do preview para permitir rolagem em ambas as direções quando necessário
@@ -56,7 +56,7 @@ import VisionEnrichedVisualBlock from './VisionEnrichedVisualBlock.vue'
 
 ---
 
-### 2. `apps/pdf-sources/src/widgets/notebook-sources-shell/ui/NotebookSourcesShell.vue`
+### 2. `apps/openyield/src/widgets/notebook-sources-shell/ui/NotebookSourcesShell.vue`
 
 **Principais mudanças:**
 - ✅ **Refatoração completa do widget de lista de cadernos**: migrado de uma estrutura estática para um componente dinâmico e tipificado (`CategorizedNotebooksList.vue`)
@@ -148,6 +148,6 @@ function sourceToNotebookItem(source: NotebookSource): NotebookItem {
 
 ## Arquivos Criados/Alterados
 
-- ✅ `apps/pdf-sources/src/widgets/llm-markdown-preview/ui/LlmMarkdownPreview.vue`
-- ✅ `apps/pdf-sources/src/widgets/notebook-sources-shell/ui/NotebookSourcesShell.vue`
+- ✅ `apps/openyield/src/widgets/llm-markdown-preview/ui/LlmMarkdownPreview.vue`
+- ✅ `apps/openyield/src/widgets/notebook-sources-shell/ui/NotebookSourcesShell.vue`
 - ⏳ Novos componentes e helpers (dependendo da estratégia escolhida)
