@@ -10,11 +10,12 @@ permissions:
 
 concurrency:
   group: release-openyield-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -37,7 +38,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build Windows portable (.exe)
-        run: npm run dist:electron:win -w openyield
+        run: npm run dist:electron:win:ci -w openyield
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 

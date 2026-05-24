@@ -16,6 +16,7 @@
     "build": "vue-tsc -b && vite build",
     "clean:pack": "rm -rf dist dist-electron release",
     "dist:electron:win": "npm run clean:pack && npm run build && electron-builder --win portable --x64",
+    "dist:electron:win:ci": "npm run clean:pack && npm run build && electron-builder --win portable --x64 --publish never",
     "dist:electron:linux": "npm run clean:pack && npm run build && electron-builder --linux AppImage",
     "dist:electron:mac": "npm run clean:pack && npm run build && electron-builder --mac dmg",
     "test": "npm run gen:fixture && vitest run",

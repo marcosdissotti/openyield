@@ -25,13 +25,19 @@ files:
   - "!resources{,/**/*}"
 
 asar: true
+# CI: portable usa NSIS+7zip; "normal" evita mx=9 (~751 MiB demora e pode ser cancelado).
+compression: normal
 
 win:
   target:
     - target: portable
       arch:
         - x64
+  artifactName: OpenYield-${version}-portable.${ext}
   signAndEditExecutable: false
+
+portable:
+  artifactName: OpenYield-${version}-portable.${ext}
 
 linux:
   target:
