@@ -34,6 +34,21 @@ import {
   vectorGarantirChunksDoNotebook,
   type VectorSearchResult,
 } from '#features/vector-persistence/lib/vectorClient'
+import {
+  answerFromValuations,
+  buildValuationContext,
+  hasAnyValuationContext,
+} from '#features/chat-context/lib/buildValuationContext'
+import {
+  buildHarnessAnswerInstructions,
+  buildHarnessPlannerPrompt,
+  deterministicChatPlan,
+  normalizeQuestionText,
+  refineChatPlan,
+  shouldUseStructuredFastPath,
+  shouldUseValuationFastPath,
+  type ChatPlan,
+} from '#features/chat-context/lib/chatHarnessPlan'
 
 const store = usePdfSourcesStore()
 const notebook = useNotebookStore()
@@ -58,13 +73,6 @@ interface ChatMessage {
   status?: 'thinking' | 'streaming' | 'done' | 'error'
   steps?: ChatStep[]
   score?: number
-}
-
-interface ChatPlan {
-  intent: 'lookup' | 'compare' | 'report' | 'general'
-  fields: string[]
-  keywords: string[]
-  depth: 'fast' | 'deep'
 }
 
 function scrollChatToBottom() {
@@ -528,49 +536,11 @@ function compactPromptTextForChat(text: string): string {
   return cleanPromptText(text).slice(0, 2500)
 }
 
-function normalizeQuestionText(text: string): string {
-  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-}
-
-function deterministicChatPlan(question: string): ChatPlan {
-  const q = normalizeQuestionText(question)
-  const fields: string[] = []
-  const keywords = new Set<string>()
-  const add = (field: string, words: string[]) => {
-    fields.push(field)
-    words.forEach((word) => keywords.add(word))
-  }
-  if (/(marg(?:em|in)?\s+e(?:b|v)it|ebit\s+margin)/i.test(q)) {
-    add('marg_ebit', ['margem ebit', 'marg ebit', 'ebit', 'receita liquida'])
-  }
-  if (/marg(?:em|in)?\s+bruta/i.test(q)) add('marg_bruta', ['margem bruta', 'lucro bruto', 'receita liquida'])
-  if (/marg(?:em|in)?\s+liquida/i.test(q)) add('marg_liquida', ['margem liquida', 'lucro liquido', 'receita liquida'])
-  if (/\broe\b/i.test(q)) add('roe', ['roe', 'lucro liquido', 'patrimonio liquido'])
-  if (/\broic\b/i.test(q)) add('roic', ['roic', 'ebit', 'capital investido'])
-  if (/receita/i.test(q)) add('receita_liquida_12m', ['receita liquida', 'receita'])
-  if (/\bebit\b|\bevit\b/i.test(q)) add('ebit_12m', ['ebit'])
-  if (/lucro/i.test(q)) add('lucro_liquido_12m', ['lucro liquido', 'lucro'])
-  if (/inadimpl|nao pagant|não pagant|pecld|contas a receber/i.test(q)) {
-    add('inadimplencia', ['inadimplencia', 'nao pagantes', 'PECLD', 'contas a receber'])
-  }
-  if (!keywords.size) {
-    question.split(/\s+/).filter((word) => word.length > 3).slice(0, 8).forEach((word) => keywords.add(word))
-  }
-  const compare = /\bcompar|versus| vs\.? |\be\b.*\b(q|t)[1-4]|\b(q|t)[1-4].*\b(q|t)[1-4]/i.test(q)
-  const report = /\brelatorio|relatório|crie|gere\b/i.test(q)
-  return {
-    intent: report ? 'report' : compare ? 'compare' : fields.length ? 'lookup' : 'general',
-    fields: [...new Set(fields)],
-    keywords: [...keywords].slice(0, 12),
-    depth: compare || report ? 'deep' : 'fast',
-  }
-}
-
 async function planChatQuery(question: string, messageId: string): Promise<ChatPlan> {
   const fallback = deterministicChatPlan(question)
   const model = llmRuntime.chatModelName.trim()
-  if (!model || !llmRuntime.effectiveServerBase) return fallback
-  setChatStep(messageId, 'Planejando busca', 'running', 'Identificando campo, período e ferramenta mais barata.')
+  if (!model || !llmRuntime.effectiveServerBase) return refineChatPlan(question, fallback)
+  setChatStep(messageId, 'Planejando busca', 'running', 'Classificando intenção e ferramentas do harness.')
   try {
     const out = await withTimeout(
       chatCompletion({
@@ -579,37 +549,31 @@ async function planChatQuery(question: string, messageId: string): Promise<ChatP
         model,
         temperature: 0,
         timeoutMs: 8_000,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              'Você é o planejador de um harness financeiro chamado OpenYield.',
-              'Ferramentas disponíveis: banco estruturado de snapshots, resumos internos dos PDFs, índice vetorial por chunks, busca local em texto extraído, geração de relatórios.',
-              'Retorne somente JSON no formato {"intent":"lookup|compare|report|general","fields":["marg_ebit"],"keywords":["margem ebit"],"depth":"fast|deep"}.',
-              'Mapeie typos: "evit" geralmente significa EBIT; "margim" significa margem.',
-              `Pergunta: ${question}`,
-            ].join('\n'),
-          },
-        ],
+        messages: [{ role: 'user', content: buildHarnessPlannerPrompt(question) }],
       }),
       5_000,
       'Planejamento por IA demorou; usando plano determinístico.',
     )
     const parsed = extractJsonObject(out.text) as Partial<ChatPlan>
-    const plan: ChatPlan = {
+    const rawPlan: ChatPlan = {
       intent:
-        parsed.intent === 'lookup' || parsed.intent === 'compare' || parsed.intent === 'report' || parsed.intent === 'general'
+        parsed.intent === 'lookup' ||
+        parsed.intent === 'compare' ||
+        parsed.intent === 'report' ||
+        parsed.intent === 'advisory' ||
+        parsed.intent === 'general'
           ? parsed.intent
           : fallback.intent,
       fields: Array.isArray(parsed.fields) && parsed.fields.length ? parsed.fields.map(String) : fallback.fields,
       keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords.map(String) : fallback.keywords,
       depth: parsed.depth === 'deep' || parsed.depth === 'fast' ? parsed.depth : fallback.depth,
     }
+    const plan = refineChatPlan(question, rawPlan)
     setChatStep(messageId, 'Planejando busca', 'done', `${plan.intent}; ${plan.keywords.slice(0, 4).join(', ')}`)
     return plan
   } catch (e) {
     setChatStep(messageId, 'Planejando busca', 'warn', e instanceof Error ? e.message : String(e))
-    return fallback
+    return refineChatPlan(question, fallback)
   }
 }
 
@@ -663,7 +627,7 @@ async function collectChatEvidence(question: string, messageId: string, plan: Ch
   try {
     const vectorQuery = [question, ...plan.keywords].filter(Boolean).join('\n')
     const rows = await withTimeout(
-      vectorBuscarChunksDoNotebook(vectorQuery, notebookId, plan.depth === 'deep' ? 16 : 10),
+      vectorBuscarChunksDoNotebook(vectorQuery, notebookId, plan.depth === 'deep' ? 20 : 10),
       2_500,
       'Busca vetorial demorou; usando fallback local.',
     )
@@ -709,25 +673,24 @@ function requestedMissingNotebooks(question: string): string[] {
   return [...new Set(missing)]
 }
 
+function buildStructuredChatContext(): string {
+  return [latestSnapshotContext(), '', buildValuationContext(notebook.activeNotebookId)].join('\n')
+}
+
 function buildChatPrompt(question: string, evidence: string, critique = '', plan?: ChatPlan): string {
   const active = selectedNotebook.value
+  const activeLabel = active ? notebookDisplayTitle(active) : 'nenhum'
   const missing = requestedMissingNotebooks(question)
+  const instructions = buildHarnessAnswerInstructions(plan ?? { intent: 'general', fields: [], keywords: [], depth: 'deep' }, activeLabel)
   return [
-    'Você é um harness de análise financeira para investidores, operando sobre um notebook de RI.',
-    'Responda em português, com objetividade, usando primeiro dados estruturados e depois evidências vetoriais.',
-    'Escopo padrão: use apenas o notebook ativo. Compare com outros notebooks somente se o usuário pedir explicitamente.',
-    'Se o usuário pedir empresa/notebook que não existe, peça para adicionar os PDFs desse notebook.',
-    'Não invente números. Se faltar dado, diga exatamente o que falta.',
-    'Para indicadores calculáveis, explique a fórmula e cite as fontes/trechos disponíveis.',
-    'Não exponha raciocínio interno oculto; mostre apenas etapas e justificativas auditáveis.',
+    ...instructions,
     critique ? `Crítica da tentativa anterior: ${critique}` : null,
     '',
-    `Notebook ativo: ${active ? notebookDisplayTitle(active) : 'nenhum'}`,
     missing.length ? `Notebooks mencionados mas ausentes: ${missing.join(', ')}` : null,
-    plan ? `Plano de busca: ${plan.intent}; campos=${plan.fields.join(', ') || 'n/a'}; profundidade=${plan.depth}; termos=${plan.keywords.join(', ')}` : null,
+    plan ? `Plano: ${plan.intent}; profundidade=${plan.depth}; termos=${plan.keywords.join(', ')}` : null,
     '',
     'Dados estruturados do banco:',
-    latestSnapshotContext(),
+    buildStructuredChatContext(),
     '',
     'Evidências vetoriais/local:',
     evidence || 'Sem evidências recuperadas.',
@@ -740,6 +703,7 @@ function buildChatPrompt(question: string, evidence: string, critique = '', plan
 }
 
 function answerFromStructuredSnapshot(question: string, plan?: ChatPlan): string | null {
+  if (!plan || !shouldUseStructuredFastPath(question, plan)) return null
   const snapshot = fundamentalStore.latestForNotebook(notebook.activeNotebookId)
   if (!snapshot) return null
   const q = normalizeQuestionText(question)
@@ -750,10 +714,10 @@ function answerFromStructuredSnapshot(question: string, plan?: ChatPlan): string
     ['roe', ['roe']],
     ['roic', ['roic']],
     ['receita_liquida_12m', ['receita liquida']],
-    ['ebit_12m', ['ebit', 'evit']],
+    ['ebit_12m', ['ebit ', ' ebit', 'ebitda']],
     ['lucro_liquido_12m', ['lucro liquido']],
   ]
-  const plannedKey = plan?.fields.find((field) => snapshot.fields.some((item) => item.key === field))
+  const plannedKey = plan.fields.find((field) => snapshot.fields.some((item) => item.key === field))
   const key = plannedKey ?? fieldHints.find(([, hints]) => hints.some((hint) => q.includes(hint)))?.[0]
   if (!key) return null
   const field = snapshot.fields.find((item) => item.key === key)
@@ -791,6 +755,7 @@ async function scoreChatAnswer(question: string, answer: string, context: string
             'Avalie a resposta para uma pergunta financeira com base no contexto.',
             'Responda somente JSON: {"score":0.0,"critique":"..."}',
             'Critérios: responde a pergunta, cita evidências, não inventa números, declara faltas.',
+            'Para perguntas de investimento ("devo investir"), penalize respostas que citam só um indicador isolado.',
             `Pergunta: ${question}`,
             `Contexto: ${context.slice(0, 9000)}`,
             `Resposta: ${answer.slice(0, 5000)}`,
@@ -812,9 +777,13 @@ async function scoreChatAnswer(question: string, answer: string, context: string
 
 async function runChatHarness(question: string, messageId: string) {
   const model = llmRuntime.chatModelName.trim()
-  if (!readySources.value.length && !fundamentalStore.latestForNotebook(notebook.activeNotebookId)) {
+  const hasNotebookData =
+    readySources.value.length > 0 ||
+    !!fundamentalStore.latestForNotebook(notebook.activeNotebookId) ||
+    hasAnyValuationContext()
+  if (!hasNotebookData) {
     patchChatMessage(messageId, {
-      text: 'Adicione uma fonte ou gere um snapshot fundamentalista primeiro para eu responder com base no caderno.',
+      text: 'Adicione uma fonte, gere um snapshot fundamentalista ou calcule uma valuation (FCD/Graham) para eu responder com base no caderno.',
       status: 'done',
     })
     return
@@ -825,6 +794,12 @@ async function runChatHarness(question: string, messageId: string) {
   const plan = await planChatQuery(question, messageId)
   let evidence = ''
   try {
+    const valuationAnswer = answerFromValuations(question, notebook.activeNotebookId)
+    if (valuationAnswer && shouldUseValuationFastPath(question, plan)) {
+      setChatStep(messageId, 'Valuations', 'done', 'Resposta encontrada nos modelos calculados.')
+      patchChatMessage(messageId, { text: valuationAnswer, score: 0.9, status: 'done' })
+      return
+    }
     const structuredAnswer = answerFromStructuredSnapshot(question, plan)
     if (structuredAnswer) {
       setChatStep(messageId, 'Banco estruturado', 'done', 'Resposta encontrada no snapshot fundamentalista.')
@@ -847,7 +822,7 @@ async function runChatHarness(question: string, messageId: string) {
     setChatStep(messageId, 'Contexto local', 'warn', e instanceof Error ? e.message : String(e))
     evidence = ''
   }
-  setChatStep(messageId, 'Pensando', 'done', 'Contexto preparado.')
+  setChatStep(messageId, 'Pensando', 'done', plan.intent === 'advisory' ? 'Montando análise completa.' : 'Contexto preparado.')
 
   let critique = ''
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -902,7 +877,7 @@ async function runChatHarness(question: string, messageId: string) {
     }
 
     const currentText = chatMessages.value.find((message) => message.id === messageId)?.text ?? ''
-    const scored = await scoreChatAnswer(question, currentText, `${latestSnapshotContext()}\n\n${evidence}`, messageId)
+    const scored = await scoreChatAnswer(question, currentText, `${buildStructuredChatContext()}\n\n${evidence}`, messageId)
     patchChatMessage(messageId, { score: scored.score })
     if (scored.score >= 0.72 || attempt === 2) {
       patchChatMessage(messageId, { status: 'done' })
