@@ -1,6 +1,6 @@
 {
   "name": "openyield",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "OpenYield desktop app (Electron + Vue)",
   "author": "openyield",
